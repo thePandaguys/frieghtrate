@@ -1,0 +1,467 @@
+FREYNA FREIGHT FORECASTING
+FRONTEND + BACKEND + ML MODEL TESTING GUIDE
+============================================================
+
+Purpose
+-------
+Use this guide to test the project in layers:
+
+1. Python environment and ML model loading
+2. FastAPI backend health and prediction endpoints
+3. Expo frontend startup and browser/device connection
+4. Frontend -> backend -> model end-to-end flow
+
+Run PowerShell commands exactly as shown. Open separate PowerShell terminals for
+long-running backend and frontend processes.
+
+
+TECH STACK
+----------
+Frontend:
+- React Native 0.81.5
+- Expo SDK 54
+- Expo Router 6 (file-based routing)
+- React 19.1
+- TypeScript 5.9
+- React Native Web 0.21
+- React Native Reanimated 4
+- React Native SVG 15
+- AsyncStorage for local persistence
+
+Backend:
+- Python
+- FastAPI
+- Uvicorn
+- Pydantic Settings
+- SQLAlchemy 2
+- Alembic migrations
+- PostgreSQL database
+- CORS middleware
+
+Machine learning:
+- scikit-learn 1.6.1
+- XGBoost 2.1.4
+- joblib
+- pandas 2.x
+- numpy
+
+Models expected in the root models folder:
+- models/freight_forecasting_model.pkl
+- models/vessel_idle_prediction_model.pkl
+- models/freight_risk_model.pkl
+
+Main backend endpoints:
+- GET  http://127.0.0.1:8000/api/health
+- POST http://127.0.0.1:8000/api/forecast
+- POST http://127.0.0.1:8000/api/vessel/idle-predict
+- POST http://127.0.0.1:8000/api/risk/predict
+- GET  http://127.0.0.1:8000/api/forecast/history
+- GET  http://127.0.0.1:8000/api/vessel/history
+- GET  http://127.0.0.1:8000/api/risk/history
+- GET  http://127.0.0.1:8000/docs
+
+
+REQUIREMENTS
+------------
+Install or verify these before testing:
+
+- Windows PowerShell
+- Python 3.11+ recommended
+- Node.js and npm
+- PostgreSQL running locally or a reachable PostgreSQL server
+- PostgreSQL database matching DATABASE_URL in backend/.env
+- Android Studio emulator, Expo Go, or a web browser for frontend testing
+
+The backend API can answer /api/health without a database, but prediction
+endpoints save history and therefore require a working PostgreSQL database.
+
+IMPORTANT CONFIGURATION NOTE:
+backend/.env.example uses database name freight_forecasting, while the checked-in
+backend/alembic.ini references freight_intelligence. Set DATABASE_URL in
+backend/.env to the database you actually create. The .env value is authoritative.
+
+
+STEP 1 - OPEN THE PROJECT
+-------------------------
+
+Set the project root:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026"
+
+Confirm important folders and files:
+
+    Get-ChildItem .\models
+    Get-ChildItem .\backend
+    Get-ChildItem .\SIH-2026\freight-forecasting
+
+
+STEP 2 - CREATE / ACTIVATE PYTHON ENVIRONMENT
+---------------------------------------------
+
+From the project root:
+
+    if (-not (Test-Path .venv\Scripts\python.exe)) { py -3 -m venv .venv }
+    .\.venv\Scripts\Activate.ps1
+    python --version
+    python -m pip install --upgrade pip
+    python -m pip install -r .\backend\requirements.txt
+    python -m pip install requests
+
+If PowerShell blocks activation, run this once in an Administrator PowerShell,
+or use the direct Python path in every command:
+
+    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+
+STEP 3 - VERIFY THE THREE MODEL FILES
+--------------------------------------
+
+Run this from the project root. It checks that every expected file exists and
+that the backend model registry can load it with the installed dependencies:
+
+    .\.venv\Scripts\python.exe -c "from pathlib import Path; from backend.app.ml import ModelRegistry; root=Path('models'); expected=['freight_forecasting_model.pkl','vessel_idle_prediction_model.pkl','freight_risk_model.pkl']; print({name:(root/name).exists() for name in expected}); registry=ModelRegistry(); registry.load_all(); print('LOADED:', sorted(registry.models)); print('ERRORS:', registry.errors)"
+
+Expected result:
+- all three file checks are True
+- LOADED contains forecast, risk, and vessel
+- ERRORS is {}
+
+If the import command fails because of package resolution, run it from backend:
+
+    Set-Location .\backend
+    ..\.venv\Scripts\python.exe -c "from app.ml import ModelRegistry; registry=ModelRegistry(); registry.load_all(); print('LOADED:', sorted(registry.models)); print('ERRORS:', registry.errors)"
+    Set-Location ..
+
+Do not continue until model loading succeeds. A model loading error usually means
+an incorrect model file, missing dependency, or incompatible scikit-learn/XGBoost
+version.
+
+
+STEP 4 - CONFIGURE BACKEND ENVIRONMENT
+--------------------------------------
+
+Create backend/.env from the example:
+
+    Copy-Item .\backend\.env.example .\backend\.env -Force
+    Get-Content .\backend\.env
+
+Make sure DATABASE_URL points to a real PostgreSQL database. Example:
+
+    DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/freight_forecasting
+    ENVIRONMENT=development
+    CORS_ORIGINS=http://localhost:8081,http://localhost:19006,http://localhost:3000
+    MODEL_DIRECTORY=../models
+
+If your database is named freight_intelligence instead, use:
+
+    DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/freight_intelligence
+
+
+STEP 5 - CREATE THE POSTGRESQL DATABASE
+----------------------------------------
+
+Only run the command for the database name used in backend/.env. For the default
+example:
+
+    psql -U postgres -c "CREATE DATABASE freight_forecasting;"
+
+If PostgreSQL reports that the database already exists, that is fine.
+If psql is not recognized, add the PostgreSQL bin directory to PATH or run psql
+from the PostgreSQL installation folder.
+
+Verify the connection using Python:
+
+    .\.venv\Scripts\python.exe -c "import os; from pathlib import Path; from dotenv import load_dotenv; load_dotenv(Path('backend')/'.env'); import psycopg; url=os.environ['DATABASE_URL'].replace('+psycopg',''); print('DATABASE_URL:', url); conn=psycopg.connect(url); print('POSTGRES: connected'); conn.close()"
+
+The .env value intentionally uses postgresql+psycopg:// because SQLAlchemy and
+Alembic use that driver-qualified format. The direct psycopg smoke test removes
+the +psycopg part before connecting.
+
+
+STEP 6 - RUN DATABASE MIGRATIONS
+--------------------------------
+
+Run Alembic from the backend directory:
+
+    Set-Location .\backend
+    ..\.venv\Scripts\python.exe -m alembic upgrade head
+    Set-Location ..
+
+Expected result includes migration completion without an exception.
+
+
+STEP 7 - START THE BACKEND API
+------------------------------
+
+Open PowerShell Terminal A and run:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026\backend"
+    ..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+Keep this terminal open.
+
+Backend URLs:
+- API health: http://127.0.0.1:8000/api/health
+- Swagger UI: http://127.0.0.1:8000/docs
+
+
+STEP 8 - TEST BACKEND HEALTH
+----------------------------
+
+Open PowerShell Terminal B:
+
+    Invoke-RestMethod http://127.0.0.1:8000/api/health | ConvertTo-Json -Depth 5
+
+Expected result:
+- status is ok
+- models.forecast is true
+- models.vessel is true
+- models.risk is true
+- model_errors is empty
+
+Also verify the API documentation loads:
+
+    Invoke-WebRequest http://127.0.0.1:8000/docs | Select-Object StatusCode
+
+Expected status: 200.
+
+
+STEP 9 - TEST ALL MODELS THROUGH THE BACKEND
+---------------------------------------------
+
+With the backend still running, execute the existing test script from the project
+root:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026"
+    .\.venv\Scripts\python.exe .\test_api.py
+
+This sends requests to all three model endpoints:
+- /api/forecast
+- /api/vessel/idle-predict
+- /api/risk/predict
+
+Expected result:
+- HTTP 200 for all three prediction requests
+- JSON response containing prediction
+- final message: All tests completed!
+
+If health passes but prediction requests return 503 with a database error, repeat
+Steps 4-6. Prediction history storage requires PostgreSQL and migrations.
+
+
+STEP 10 - CHECK SAVED PREDICTION HISTORY
+-----------------------------------------
+
+After test_api.py succeeds:
+
+    Invoke-RestMethod http://127.0.0.1:8000/api/forecast/history | ConvertTo-Json -Depth 8
+    Invoke-RestMethod http://127.0.0.1:8000/api/vessel/history | ConvertTo-Json -Depth 8
+    Invoke-RestMethod http://127.0.0.1:8000/api/risk/history | ConvertTo-Json -Depth 8
+
+Expected result: each endpoint returns a JSON array containing recent records.
+
+
+STEP 11 - CONFIGURE THE EXPO FRONTEND
+--------------------------------------
+
+Open PowerShell Terminal C:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026\SIH-2026\freight-forecasting"
+    npm install
+
+Create the frontend environment file. The current services/api.ts reads
+EXPO_PUBLIC_BACKEND_URL, so use this exact variable:
+
+    @"
+    EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:8000/api
+    "@ | Set-Content .env
+
+Check that the variable is present:
+
+    Get-Content .env
+
+Important device note:
+- Browser on the same computer: use http://127.0.0.1:8000/api
+- Android emulator: use http://10.0.2.2:8000/api
+- Physical phone: use http://YOUR_COMPUTER_LAN_IP:8000/api, for example
+  http://192.168.1.20:8000/api
+- The phone and computer must be on the same network.
+
+For an Android emulator, replace the .env value with:
+
+    EXPO_PUBLIC_BACKEND_URL=http://10.0.2.2:8000/api
+
+
+STEP 12 - RUN FRONTEND STATIC CHECKS
+------------------------------------
+
+From the frontend folder:
+
+    npm run lint
+    npx tsc --noEmit
+
+Expected result:
+- lint completes without errors
+- TypeScript completes without errors
+
+If the project does not expose a separate TypeScript script, npx tsc --noEmit is
+the correct direct type-check command.
+
+
+STEP 13 - START THE FRONTEND
+-----------------------------
+
+For web testing, run:
+
+    npm run web
+
+For Expo development server with device/emulator options, run:
+
+    npm start
+
+For Android emulator:
+
+    npm run android
+
+Keep the Expo terminal open. Open the URL shown by Expo, usually:
+- Web: http://localhost:8081
+- Expo development server: URL shown in the terminal
+
+
+STEP 14 - TEST FRONTEND TO BACKEND TO MODEL
+--------------------------------------------
+
+Use the frontend manually in this order:
+
+1. Open the app.
+2. Navigate from splash/landing to Login.
+3. Enter any values currently accepted by the demo login.
+4. Open Forecast.
+5. Press the forecast/analyze/refresh action.
+6. Confirm the screen finishes loading and displays a prediction.
+7. Open Optimizer.
+8. Press its analyze/run action.
+9. Confirm idle hours or a numeric prediction is displayed.
+10. Open Risk.
+11. Check whether a risk prediction action exists and whether it displays a result.
+12. Return to the backend terminal and confirm request logs appeared.
+13. Call the history endpoints from Step 10 and confirm new records exist.
+
+A successful end-to-end path is:
+frontend button -> services/api.ts -> FastAPI endpoint -> loaded pickle model ->
+PostgreSQL history record -> JSON response -> frontend result.
+
+
+STEP 15 - TEST FAILURE CASES
+-----------------------------
+
+Backend unavailable:
+1. Stop the backend terminal with Ctrl+C.
+2. Press a prediction button in the frontend.
+3. Confirm the UI shows an error or remains recoverable instead of silently
+   crashing.
+4. Restart the backend and retry.
+
+Invalid model or missing model:
+1. Stop the backend.
+2. Temporarily move one model file out of models (do not delete it).
+3. Restart backend.
+4. Call /api/health and verify the affected model is false and model_errors
+   explains the issue.
+5. Restore the file and restart backend.
+
+Database unavailable:
+1. Stop PostgreSQL or temporarily use an invalid DATABASE_URL.
+2. Restart backend.
+3. Confirm /api/health still responds.
+4. Confirm prediction endpoints report database/history failure rather than a
+   successful stored prediction.
+5. Restore DATABASE_URL and PostgreSQL.
+
+Frontend wrong URL:
+- Browser: localhost/127.0.0.1 is usually correct.
+- Android emulator: use 10.0.2.2.
+- Physical device: use the computer LAN IP and allow port 8000 through Windows
+  Firewall if required.
+
+
+QUICK COMMAND CHECKLIST
+-----------------------
+
+Terminal A - backend:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026\backend"
+    ..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+Terminal B - API tests:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026"
+    .\.venv\Scripts\python.exe .\test_api.py
+
+Terminal C - frontend:
+
+    Set-Location "C:\Users\MANSI\Downloads\SIH-2026\SIH-2026\freight-forecasting"
+    npm install
+    npm run lint
+    npx tsc --noEmit
+    npm run web
+
+
+SUCCESS CRITERIA
+----------------
+
+The local stack is working when all of these are true:
+
+[ ] All three model files exist.
+[ ] Model registry loads forecast, vessel, and risk without errors.
+[ ] PostgreSQL connection succeeds.
+[ ] Alembic migrations complete.
+[ ] /api/health returns status ok and all models true.
+[ ] test_api.py returns successful responses for all three predictions.
+[ ] Prediction history endpoints contain records.
+[ ] npm install completes.
+[ ] npm run lint completes.
+[ ] npx tsc --noEmit completes.
+[ ] Expo frontend opens in web/emulator/device.
+[ ] Frontend forecast action reaches the backend and displays a result.
+[ ] Frontend optimizer action reaches the backend and displays a result.
+[ ] Frontend risk action reaches the backend and displays a result, if the
+    current risk screen exposes that action.
+
+
+FILES USED IN THIS TEST
+-----------------------
+
+- backend/requirements.txt
+- backend/.env.example
+- backend/app/main.py
+- backend/app/ml.py
+- backend/app/schemas.py
+- backend/alembic.ini
+- models/freight_forecasting_model.pkl
+- models/vessel_idle_prediction_model.pkl
+- models/freight_risk_model.pkl
+- test_api.py
+- SIH-2026/freight-forecasting/package.json
+- SIH-2026/freight-forecasting/services/api.ts
+
+Last updated: 2026-08-30
+
+
+CURRENT BASELINE OBSERVED DURING GUIDE VALIDATION
+-------------------------------------------------
+
+The following checks were run on 2026-08-30:
+
+- npm run lint: PASS with 0 errors and 24 warnings.
+- npx tsc --noEmit: PASS with no errors after fixing shared style prop types
+    and the StatCard theme token.
+- ML model registry check: PASS; forecast, risk, and vessel all loaded.
+- PostgreSQL port check: FAIL at the time of validation; localhost:5432 was not
+    listening. Start the PostgreSQL service before running migrations or
+    prediction endpoints.
+
+The previous TypeScript errors were caused by shared ViewStyle props rejecting
+normal React Native style arrays, plus an incorrect theme token in
+components/StatCard.tsx. Those frontend errors are now fixed. Lint warnings
+remain, but there are no lint errors.
