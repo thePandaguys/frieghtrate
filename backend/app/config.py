@@ -6,9 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     environment: str = "development"
-    database_url: str | None = None
-    cors_origins: str = "http://localhost:8081,http://localhost:19006"
+    # Default to a local SQLite file so prediction history works with zero configuration.
+    database_url: str | None = f"sqlite:///{Path(__file__).resolve().parents[2] / 'freight_history.db'}"
+    cors_origins: str = "http://localhost:8081,http://localhost:19006,http://localhost:8000"
     model_directory: Path = Path(__file__).resolve().parents[2] / "models"
+    market_data_mode: str = "reference-curve"   # 'reference-curve' | 'live' (adapters pending)
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

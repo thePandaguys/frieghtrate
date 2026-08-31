@@ -1,401 +1,55 @@
-import { Feather } from '@expo/vector-icons';
-import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import ScreenShell, { Card, SectionHeader } from '../../components/ScreenShell';
+import { MultiLine } from '../../components/ChartsPro';
 import { useTheme } from '../../constants/theme';
-import { getAnalyticsSummary } from '../../services/api';
+import { useAsync, fmtPct } from '../../hooks/useApi';
+import { getAnalytics, getMarketHistory, getSnapshot, type AnalyticsSummary, type Snapshot } from '../../services/api';
 
 export default function Stats() {
   const { colors } = useTheme();
-  const [period, setPeriod] = useState('30D');
-  const [loading, setLoading] = useState(true);
-  const [analyticsData, setAnalyticsData] = useState({
-    total_voyages_analyzed: 1428,
-    forecast_accuracy_pct: 95.8,
-    avg_freight_rate: 43.50,
-    avg_idle_hours: 18.4,
-    savings_generated_usd: 4200000.0,
-    status: 'synchronized',
-  });
-
-  const anim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.spring(anim, { toValue: 1, friction: 8, tension: 45, useNativeDriver: true }).start();
-
-    // Fetch dynamic analytics from database & ML model prediction history
-    getAnalyticsSummary()
-      .then(res => {
-        if (res) {
-          setAnalyticsData({
-            total_voyages_analyzed: res.total_voyages_analyzed ?? 1428,
-            forecast_accuracy_pct: res.forecast_accuracy_pct ?? 95.8,
-            avg_freight_rate: res.avg_freight_rate ?? 43.50,
-            avg_idle_hours: res.avg_idle_hours ?? 18.4,
-            savings_generated_usd: res.savings_generated_usd ?? 4200000.0,
-            status: res.status ?? 'synchronized',
-          });
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
-  }, []);
-
-  const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
-
-  const dynamicKPIs = [
-    {
-      label: 'TOTAL BULK VOYAGES OPTIMIZED',
-      value: analyticsData.total_voyages_analyzed.toLocaleString(),
-      change: '+22.4%',
-      icon: 'compass',
-    },
-    {
-      label: 'ML FORECAST ACCURACY (MAPE 4.2%)',
-      value: `${analyticsData.forecast_accuracy_pct}%`,
-      change: '+4.1%',
-      icon: 'trending-up',
-    },
-    {
-      label: 'AVG. BULK FREIGHT RATE',
-      value: `$${analyticsData.avg_freight_rate.toFixed(2)}`,
-      suffix: '/ MT',
-      change: '+8.4%',
-      icon: 'dollar-sign',
-    },
-    {
-      label: 'DEMURRAGE / IDLE REDUCTION',
-      value: `${analyticsData.avg_idle_hours}h Avg`,
-      change: 'OPTIMAL',
-      icon: 'shield-check',
-    },
-  ];
+  const analytics = useAsync<AnalyticsSummary>(() => getAnalytics(), []);
+  const snap = useAsync<Snapshot>(() => getSnapshot(), []);
+  const hist = useAsync(() => getMarketHistory('gladstone', 'paradip', 'Panamax', 'Coal', 1825), []);
 
   return (
-    <ScreenShell
-      title="System Telemetry & Procurement KPIs"
-      subtitle="Dynamic database telemetry, model validation metrics, and estimated charter savings (SIH 26006)"
-      breadcrumb="Statistics"
-      badge={analyticsData.status === 'synchronized' ? 'LIVE DB FEED' : 'MODEL BENCHMARK'}
-      badgeColor={colors.success}
-    >
-      {/* Period Selector */}
-      <View style={[styles.periodCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.periodLabel, { color: colors.textMuted }]}>ANALYTICS TIMEFRAME</Text>
-        <View style={styles.periodSelector}>
-          {['7D', '30D', '90D', '1Y'].map(p => (
-            <Pressable
-              key={p}
-              onPress={() => setPeriod(p)}
-              style={[
-                styles.periodBtn,
-                {
-                  backgroundColor: period === p ? colors.primary : colors.cardAlt,
-                  borderColor: period === p ? colors.primary : colors.border,
-                },
-              ]}
-            >
-              <Text style={[styles.periodText, { color: period === p ? '#FFFFFF' : colors.textMuted }]}>{p}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      {/* Dynamic Primary KPI Grid */}
-      <SectionHeader eyebrow="Procurement Telemetry" title="Dynamic Performance Indicators" right={loading ? 'FETCHING...' : 'LIVE UPDATED'} />
-      <View style={styles.metricGrid}>
-        {dynamicKPIs.map(m => (
-          <Card key={m.label} style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.metricTop}>
-              <Text style={[styles.metricLabel, { color: colors.textMuted }]}>{m.label}</Text>
-              <Feather name={m.icon as any} size={15} color={colors.primary} />
-            </View>
-            <View style={styles.metricValueRow}>
-              <Text style={[styles.metricValue, { color: colors.text }]}>{m.value}</Text>
-              {m.suffix && <Text style={[styles.metricSuffix, { color: colors.textMuted }]}> {m.suffix}</Text>}
-            </View>
-            <Text style={[styles.metricChange, { color: colors.success }]}>{m.change}</Text>
-          </Card>
+    <ScreenShell title="Statistics & Model Audit" subtitle="Live market series (5-yr) and the honest prediction audit trail" badge="AUDIT" badgeColor={colors.primary}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+        {[
+          ['Predictions stored', analytics.data?.predictions_stored, 'in SQLite (audited)'],
+          ['Forecast runs', analytics.data?.forecast_history_count, 'last 100 window'],
+          ['Risk scorings', analytics.data?.risk_history_count, 'last 100 window'],
+          ['Idle predictions', analytics.data?.vessel_history_count, 'last 100 window'],
+          ['Avg predicted idle', analytics.data?.avg_idle_hours, 'hours (stored runs)'],
+          ['Benchmark vol.', snap.data?.benchmark_route.annualized_volatility_pct, '% annualised'],
+        ].map(([label, value, sub]) => (
+          <View key={String(label)} style={[styles.kpi, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={{ color: colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1 }}>{String(label).toUpperCase()}</Text>
+            <Text style={{ color: colors.text, fontSize: 24, fontWeight: '900', marginVertical: 4 }}>{value === null || value === undefined ? '—' : String(value)}</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 11 }}>{sub}</Text>
+          </View>
         ))}
       </View>
+      {analytics.loading ? <Card><ActivityIndicator color={colors.deepAccent} /></Card> : null}
+      {analytics.data ? <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 8 }}>📌 {analytics.data.note}</Text> : null}
 
-      {/* Model Benchmark Chart */}
-      <SectionHeader eyebrow="Inference Accuracy" title="Forward Model Accuracy vs Actuals" />
-      <Animated.View style={{ opacity: anim, transform: [{ scale }] }}>
-        <Card style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={styles.chartHeader}>
-            <View>
-              <Text style={[styles.chartTitle, { color: colors.text }]}>Baltic Index Correlation & Rate Precision</Text>
-              <Text style={[styles.chartSub, { color: colors.textSecondary }]}>Capesize & Panamax forward prediction accuracy</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.chartValue, { color: colors.accent }]}>{analyticsData.forecast_accuracy_pct}%</Text>
-              <Text style={[styles.chartChange, { color: colors.success }]}>+3.8% BENCHMARK</Text>
-            </View>
-          </View>
-          <View style={styles.chartBars}>
-            {[58, 66, 72, 78, 84, 88, 93, 98].map((h, i) => (
-              <View key={i} style={[styles.chartBar, { height: h, backgroundColor: colors.primary, opacity: 0.5 + i * 0.07 }]} />
-            ))}
-          </View>
-          <View style={styles.chartLabels}>
-            {['WK 1', 'WK 2', 'WK 3', 'WK 4', 'WK 5', 'WK 6', 'WK 7', 'WK 8'].map(l => (
-              <Text key={l} style={[styles.chartLabel, { color: colors.textMuted }]}>{l}</Text>
-            ))}
-          </View>
-        </Card>
-      </Animated.View>
-
-      {/* Optimization Savings Value Card */}
-      <SectionHeader eyebrow="Economic Value Delivered" title="Procurement Cost Reduction" />
-      <Card style={[styles.savingsCard, { backgroundColor: colors.cardAlt, borderColor: colors.primary }]}>
-        <View style={styles.savingsHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.savingsEyebrow, { color: colors.primary }]}>TOTAL CHARTERING SAVINGS (ESTIMATED)</Text>
-            <Text style={[styles.savingsTitle, { color: colors.text }]}>Optimization Impact</Text>
-          </View>
-          <Text style={[styles.savingsValue, { color: colors.success }]}>
-            ${(analyticsData.savings_generated_usd / 1e6).toFixed(2)}M
-          </Text>
-        </View>
-        <Text style={[styles.savingsDesc, { color: colors.textSecondary }]}>
-          Derived through proactive multi-voyage booking, avoidance of spot market spikes, and port draft-optimized vessel sizing.
+      <SectionHeader eyebrow="GLADSTONE → PARADIP · PANAMAX" title="5-year route rate & BDI (downsampled server-side for <2s render)" right={hist.data ? `${hist.data.elapsed_ms} ms · ${hist.data.count_raw}→${hist.data.count_downsampled} pts` : ''} />
+      <Card>
+        {hist.data ? (
+          <MultiLine
+            series={[{ name: 'Rate $/t', values: hist.data.rates }, { name: 'BDI (÷100)', values: hist.data.bdi.map((b) => b / 100) }]}
+            labels={hist.data.dates}
+            height={250}
+          />
+        ) : hist.error ? <Text style={{ color: colors.danger }}>API unavailable: {hist.error}</Text> : <ActivityIndicator color={colors.deepAccent} style={{ margin: 30 }} />}
+        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 10 }}>
+          Provenance: {hist.data?.provenance ?? '…'} · WoW benchmark {snap.data ? fmtPct(snap.data.benchmark_route.wow_pct) : '…'}
         </Text>
-        <View style={[styles.savingsStats, { borderTopColor: colors.divider }]}>
-          {[
-            { l: 'CHARTER TIMING SAVINGS', v: `+$${((analyticsData.savings_generated_usd * 0.44) / 1e6).toFixed(2)}M` },
-            { l: 'VESSEL SIZING (CAPESIZE)', v: `+$${((analyticsData.savings_generated_usd * 0.34) / 1e6).toFixed(2)}M` },
-            { l: 'DEMURRAGE AVOIDANCE', v: `+$${((analyticsData.savings_generated_usd * 0.22) / 1e6).toFixed(2)}M` },
-          ].map(s => (
-            <View key={s.l} style={styles.statCol}>
-              <Text style={[styles.impactLabel, { color: colors.textMuted }]}>{s.l}</Text>
-              <Text style={[styles.impactValue, { color: colors.text }]}>{s.v}</Text>
-            </View>
-          ))}
-        </View>
       </Card>
-
-      {/* Data Health Telemetry */}
-      <SectionHeader eyebrow="Data Infrastructure" title="Data Feed Health & Latency" />
-      {[
-        { title: 'Baltic Dry Index (BDI / BCI / BPI)', value: '99.4%', status: 'REAL-TIME' },
-        { title: 'Global AIS Satellite Fleet Feed', value: '98.2%', status: 'REAL-TIME' },
-        { title: 'Indian Ports Berth / Turnaround Telemetry', value: '97.6%', status: 'HEALTHY' },
-        { title: 'Neural Forecast Weights & Feature Store', value: '99.8%', status: 'SYNCHRONIZED' },
-      ].map(d => (
-        <Card key={d.title} style={[styles.dataCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={styles.dataLeft}>
-            <View style={[styles.dataDot, { backgroundColor: colors.success }]} />
-            <Text style={[styles.dataTitle, { color: colors.text }]}>{d.title}</Text>
-          </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={[styles.dataValue, { color: colors.primary }]}>{d.value}</Text>
-            <Text style={[styles.dataStatus, { color: colors.success }]}>{d.status}</Text>
-          </View>
-        </Card>
-      ))}
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  periodCard: {
-    padding: 14,
-    marginBottom: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  periodLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  periodSelector: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  periodBtn: {
-    flex: 1,
-    height: 36,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  periodText: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  metricGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 8,
-  },
-  metricCard: {
-    flex: 1,
-    minWidth: 160,
-    padding: 14,
-    justifyContent: 'space-between',
-  },
-  metricTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  metricLabel: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    flex: 1,
-  },
-  metricValueRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginTop: 8,
-  },
-  metricValue: {
-    fontSize: 22,
-    fontWeight: '900',
-    letterSpacing: -0.4,
-  },
-  metricSuffix: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  metricChange: {
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  chartCard: {
-    padding: 18,
-    marginBottom: 12,
-  },
-  chartHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  chartTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  chartSub: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  chartValue: {
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  chartChange: {
-    fontSize: 10,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  chartBars: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    height: 110,
-    marginBottom: 8,
-  },
-  chartBar: {
-    flex: 1,
-    borderRadius: 6,
-  },
-  chartLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  chartLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-  },
-  savingsCard: {
-    padding: 18,
-    marginBottom: 12,
-    borderWidth: 1.5,
-  },
-  savingsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  savingsEyebrow: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  savingsTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  savingsValue: {
-    fontSize: 24,
-    fontWeight: '900',
-  },
-  savingsDesc: {
-    fontSize: 11,
-    lineHeight: 16,
-    marginBottom: 12,
-  },
-  savingsStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-  },
-  statCol: {
-    minWidth: 110,
-  },
-  impactLabel: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  impactValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  dataCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    marginBottom: 8,
-  },
-  dataLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  dataDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  dataTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  dataValue: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  dataStatus: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginTop: 2,
-  },
+  kpi: { flex: 1, minWidth: 170, borderWidth: 1, borderRadius: 14, padding: 14 },
 });

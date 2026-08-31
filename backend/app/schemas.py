@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# ── Legacy raw-model schemas (kept for backward compatibility) ───────────────
 class FreightForecastRequest(BaseModel):
     origin_port: str
     destination_port: str
@@ -72,3 +73,89 @@ class HistoryItem(BaseModel):
     result: dict[str, Any]
     confidence: float | None
     created_at: datetime
+
+
+# ── New decision-engine schemas ──────────────────────────────────────────────
+class ForecastSeriesRequest(BaseModel):
+    origin: str
+    destination: str
+    vessel_type: str = "Panamax"
+    cargo_type: str = "Coal"
+    horizon_days: int = Field(default=30, ge=1, le=90)
+    include_history_days: int = Field(default=60, ge=0, le=1825)
+
+
+class FeasibilityRequest(BaseModel):
+    origin: str
+    destination: str
+    tonnes: float = Field(gt=0)
+    cargo_type: str = "Coal"
+
+
+class OptimizeRequest(BaseModel):
+    origin: str
+    destination: str
+    tonnes: float = Field(gt=0)
+    cargo_type: str = "Coal"
+    priority: str = Field(default="cost", pattern="^(cost|time|balanced)$")
+    horizon_days: int = Field(default=30, ge=1, le=90)
+    port_cost_usd: float | None = None
+
+
+class TimingRequest(BaseModel):
+    origin: str
+    destination: str
+    vessel_type: str = "Panamax"
+    cargo_type: str = "Coal"
+    horizon_weeks: int = Field(default=8, ge=1, le=13)
+
+
+class TCERequest(BaseModel):
+    origin: str
+    destination: str
+    vessel_type: str = "Panamax"
+    cargo_type: str = "Coal"
+    tonnes: float = Field(gt=0)
+    rate_usd_t: float | None = None
+    fuel_usd_t: float = 620.0
+    port_cost_usd: float | None = None
+    use_forecast: bool = False
+
+
+class Scenario(BaseModel):
+    name: str = "Scenario"
+    origin: str = "gladstone"
+    destination: str = "paradip"
+    vessel_type: str = "Panamax"
+    cargo_type: str = "Coal"
+    tonnes: float = 75_000
+    rate_usd_t: float | None = None
+    fuel_usd_t: float = 620.0
+    use_forecast: bool = False
+
+
+class ScenarioCompareRequest(BaseModel):
+    scenarios: list[Scenario] = Field(min_length=2, max_length=4)
+
+
+class FixtureCreate(BaseModel):
+    vessel_name: str
+    vessel_class: str = "Panamax"
+    origin: str
+    destination: str
+    cargo_type: str = "Coal"
+    tonnes: float = Field(gt=0)
+    rate_usd_t: float = Field(gt=0)
+    fixture_date: str
+    broker: str = ""
+    notes: str = ""
+
+
+class PortConstraintUpdate(BaseModel):
+    max_draft_m: float | None = Field(default=None, gt=0, le=30)
+    max_loa_m: float | None = Field(default=None, gt=0, le=500)
+    max_beam_m: float | None = Field(default=None, gt=0, le=80)
+    handling_rate_tph: int | None = Field(default=None, gt=0)
+    waiting_hours: float | None = Field(default=None, ge=0)
+    congestion_0_100: float | None = Field(default=None, ge=0, le=100)
+    source: str = "manual edit"

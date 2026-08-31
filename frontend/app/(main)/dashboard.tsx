@@ -1,451 +1,319 @@
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import {
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from 'react-native';
-import MobileDashboard from '../../components/mobile/MobileDashboard';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
-import Charts from '../../components/Charts';
-import MarketCards from '../../components/MarketCards';
-import RecommendationCard from '../../components/RecommendationCard';
-import RightPanel from '../../components/RightPanel';
 import Sidebar from '../../components/Sidebar';
-import VoyagePlanner from '../../components/VoyagePlanner';
-import WorldMap from '../../components/WorldMap';
+import { ForecastBandChart, Spark, RankedBars } from '../../components/ChartsPro';
+import { PrimaryButton } from '../../components/ScreenShell';
 import { useTheme } from '../../constants/theme';
+import { useAsync, fmtPct } from '../../hooks/useApi';
+import { getAlerts, getAnalytics, getMeta, getSnapshot, postForecastSeries, postOptimize, type Alert, type AnalyticsSummary, type Snapshot, type ForecastSeries, type OptimizeResult } from '../../services/api';
 
-const roleOptions = ['Administrator', 'Logistics Manager', 'Operations Manager', 'Fleet Manager', 'Chartering Manager', 'Freight Analyst', 'Port Operator', 'Risk Analyst', 'Viewer'] as const;
-const notifications = ['Storm warning: South China Sea', 'High fuel price alert', 'Port congestion: Rotterdam', 'Weather update received'];
-
-const searchCatalog = [
-  { label: 'Dashboard', route: '/(main)/dashboard', tags: ['dashboard', 'home', 'overview'] },
-  { label: 'Freight Forecast', route: '/(main)/forecast', tags: ['forecast', 'freight', 'market'] },
-  { label: 'Market Entry', route: '/(main)/market-entry', tags: ['market', 'entry', 'charter'] },
-  { label: 'Risk Analysis', route: '/(main)/risk', tags: ['risk', 'security', 'weather', 'delay'] },
-  { label: 'Routes', route: '/(main)/routes', tags: ['routes', 'ports', 'corridors'] },
-  { label: 'Reports', route: '/(main)/reports', tags: ['reports', 'voyage', 'analysis'] },
-  { label: 'Statistics', route: '/(main)/stats', tags: ['stats', 'statistics', 'performance'] },
-  { label: 'Settings', route: '/(main)/settings', tags: ['settings', 'preferences', 'system'] },
-  { label: 'Alerts', route: '/(main)/alerts', tags: ['alerts', 'warning', 'notifications'] },
-  { label: 'Vessel Optimizer', route: '/(main)/vessels', tags: ['vessel', 'optimizer', 'fleet'] },
-];
+const roleOptions = ['Logistics Manager', 'Chartering Manager', 'Risk Analyst', 'Administrator'] as const;
 
 export default function DashboardScreen() {
   const { width } = useWindowDimensions();
   const { colors } = useTheme();
-  const isMobile = width < 768;
-  const [role, setRole] = useState('Logistics Manager');
-  const [origin, setOrigin] = useState('Gladstone');
-  const [destination, setDestination] = useState('Paradip');
-  const [cargo, setCargo] = useState('Coal');
-  const [quantity, setQuantity] = useState('75000');
+  const isMobile = width < 900;
+  const [role, setRole] = useState<(typeof roleOptions)[number]>('Logistics Manager');
+  const [origin, setOrigin] = useState('gladstone');
+  const [destination, setDestination] = useState('paradip');
+  const [tonnes, setTonnes] = useState('75000');
   const [vessel, setVessel] = useState('Panamax');
-  const [contract, setContract] = useState('Time Charter');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [roleOpen, setRoleOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [priority, setPriority] = useState<'cost' | 'time'>('cost');
+  const [optResult, setOptResult] = useState<OptimizeResult | null>(null);
+  const [optimizing, setOptimizing] = useState(false);
 
-  const filteredSearchResults = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return [];
-    return searchCatalog.filter((item) => {
-      const haystack = `${item.label} ${item.tags.join(' ')}`.toLowerCase();
-      return haystack.includes(query);
-    }).slice(0, 6);
-  }, [searchQuery]);
+  const meta = useAsync(() => getMeta(), []);
+  const snap = useAsync<Snapshot>(() => getSnapshot(), []);
+  const alerts = useAsync<{ alerts: Alert[] }>(() => getAlerts(), []);
+  const analytics = useAsync<AnalyticsSummary>(() => getAnalytics(), []);
+  const fc = useAsync<ForecastSeries>(() => postForecastSeries({ origin: 'gladstone', destination: 'paradip', vessel_type: 'Panamax', cargo_type: 'Coal', horizon_days: 30, include_history_days: 90 }), []);
 
-  const now = useMemo(() => new Date(), []);
-  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-  const timeLabel = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const kpis = useMemo(() => {
+    const s = snap.data;
+    if (!s) return [];
+    return [
+      { label: 'BDI', value: Math.round(s.bdi.value).toLocaleString(), delta: fmtPct(s.bdi.wow_pct), spark: null as number[] | null, good: s.bdi.wow_pct <= 0 },
+      { label: 'Coal $/t', value: `$${s.coal_price.value.toFixed(1)}`, delta: fmtPct(s.coal_price.wow_pct), spark: null as number[] | null, good: s.coal_price.wow_pct <= 0 },
+      { label: 'USD/INR', value: `₹${s.usd_inr.value.toFixed(2)}`, delta: fmtPct(s.usd_inr.wow_pct), spark: null as number[] | null, good: s.usd_inr.wow_pct <= 0 },
+      { label: `Benchmark ${s.benchmark_route.vessel} $/t`, value: `$${s.benchmark_route.rate_usd_t.toFixed(2)}`, delta: fmtPct(s.benchmark_route.wow_pct), spark: null as number[] | null, good: s.benchmark_route.wow_pct <= 0 },
+      { label: 'Volatility ann.', value: `${s.benchmark_route.annualized_volatility_pct.toFixed(0)}%`, delta: '30d', spark: null as number[] | null, good: s.benchmark_route.annualized_volatility_pct < 35 },
+    ];
+  }, [snap.data]);
 
-  const handleAnalyze = () => {
-    setIsAnalyzing(true);
-    setTimeout(() => setIsAnalyzing(false), 2600);
+  const runOptimize = async () => {
+    setOptimizing(true);
+    setOptResult(null);
+    try {
+      const result = await postOptimize({ origin, destination, tonnes: Number(tonnes) || 75000, vessel_type: undefined as never, cargo_type: 'Coal', priority } as never);
+      setOptResult(result);
+    } catch {
+      setOptResult(null);
+    } finally {
+      setOptimizing(false);
+    }
   };
 
-  if (isMobile) return <MobileDashboard />;
+  if (isMobile) {
+    return (
+      <ScreenShellLite colors={colors}>
+        <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800' }}>Command Center</Text>
+        <View style={{ gap: 8, marginTop: 12 }}>
+          {kpis.map((k) => (
+            <View key={k.label} style={[styles.kpiMobile, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '700' }}>{k.label}</Text>
+              <Text style={{ color: colors.text, fontSize: 20, fontWeight: '800' }}>{k.value}</Text>
+              <Text style={{ color: k.good ? colors.success : colors.danger, fontSize: 12, fontWeight: '700' }}>{k.delta}</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={{ color: colors.textMuted, marginTop: 16 }}>Open on a desktop display for the full command-center experience.</Text>
+      </ScreenShellLite>
+    );
+  }
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <View style={[styles.shell, { backgroundColor: colors.background }]}>
-        {!isMobile && <Sidebar />}
-
-        {isMobile && mobileMenuOpen && (
-          <Pressable style={styles.mobileOverlay} onPress={() => setMobileMenuOpen(false)}>
-            <Pressable style={[styles.mobileDrawer, { backgroundColor: colors.sidebar, borderRightColor: colors.sidebarBorder }]} onPress={() => undefined}>
-              <View style={styles.drawerHeader}>
-                <View style={styles.brandWrap}>
-                  <View style={[styles.brandMark, { backgroundColor: colors.deepAccent }]}>
-                    <Text style={styles.brandMarkText}>F</Text>
-                  </View>
-                  <View>
-                    <Text style={[styles.brandText, { color: colors.text }]}>FREYNA</Text>
-                    <Text style={[styles.brandSubText, { color: colors.textMuted }]}>FREIGHT INTELLIGENCE</Text>
-                  </View>
-                </View>
-                <Pressable onPress={() => setMobileMenuOpen(false)} style={[styles.drawerCloseBtn, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                  <Text style={[styles.drawerCloseText, { color: colors.text }]}>×</Text>
-                </Pressable>
-              </View>
-              <Sidebar />
-            </Pressable>
-          </Pressable>
-        )}
-
-        <View style={[styles.mainArea, { backgroundColor: colors.background }]}>
-          {/* TopBar */}
-          <View style={[styles.topBar, { backgroundColor: colors.topBar, borderBottomColor: colors.topBarBorder, shadowColor: colors.shadow }]}>
-            {isMobile && (
-              <Pressable style={[styles.hamburger, { backgroundColor: colors.cardAlt, borderColor: colors.border }]} onPress={() => setMobileMenuOpen(true)}>
-                <Feather name="menu" size={20} color={colors.text} />
-              </Pressable>
-            )}
-
-            <View style={styles.topBarLeft}>
+    <View style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      <View style={styles.shell}>
+        <Sidebar />
+        <View style={styles.mainArea}>
+          {/* Top bar */}
+          <View style={[styles.topBar, { backgroundColor: colors.topBar, borderBottomColor: colors.topBarBorder }]}>
+            <View>
               <Text style={[styles.eyebrow, { color: colors.primary }]}>FREYNA Freight Intelligence & Analytics</Text>
               <Text style={[styles.title, { color: colors.text }]}>Command Center</Text>
-              {!isMobile && (
-                <View style={styles.metaRow}>
-                  <View style={[styles.metaChip, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                    <Text style={[styles.metaLabel, { color: colors.textMuted }]}>Weather</Text>
-                    <Text style={[styles.metaValue, { color: colors.text }]}>18 kt / 15°C</Text>
-                  </View>
-                  <View style={[styles.metaChip, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                    <Text style={[styles.metaLabel, { color: colors.textMuted }]}>System</Text>
-                    <Text style={[styles.metaValue, { color: colors.success }]}>Operational</Text>
-                  </View>
-                </View>
-              )}
             </View>
-
-            <View style={styles.topBarRight}>
-              <View style={[styles.searchWrap, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
-                <Feather name="search" size={14} color={colors.primary} />
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Search route, vessel, port…"
-                  placeholderTextColor={colors.placeholder}
-                  style={[styles.searchInput, { color: colors.inputText }]}
-                />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              {roleOptions.map((r) => (
+                <Pressable key={r} onPress={() => setRole(r)} style={[styles.roleChip, role === r && { backgroundColor: colors.deepAccent }]}>
+                  <Text style={{ color: role === r ? '#FFF' : colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{r}</Text>
+                </Pressable>
+              ))}
+              <View style={[styles.statusChip, { borderColor: colors.border, backgroundColor: colors.cardAlt }]}>
+                <View style={[styles.liveDot, { backgroundColor: snap.loading ? colors.warning : colors.success }]} />
+                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>
+                  {snap.data ? `SYNCED ${snap.data.as_of}` : 'SYNCING…'}
+                </Text>
               </View>
-
-              {filteredSearchResults.length > 0 && (
-                <View style={[styles.searchResults, { backgroundColor: colors.card, borderColor: colors.border, shadowColor: colors.shadowMd }]}>
-                  {filteredSearchResults.map((item) => (
-                    <Pressable
-                      key={item.label}
-                      onPress={() => { setSearchQuery(''); router.push(item.route as any); }}
-                      style={({ pressed }) => [styles.searchResultItem, { borderBottomColor: colors.divider }, pressed && { backgroundColor: colors.navHover }]}
-                    >
-                      <Text style={[styles.searchResultLabel, { color: colors.text }]}>{item.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
-
-              {!isMobile && (
-                <>
-                  <View style={[styles.metaChip, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                    <Text style={[styles.metaLabel, { color: colors.textMuted }]}>Date</Text>
-                    <Text style={[styles.metaValue, { color: colors.text }]}>{dateLabel}</Text>
-                  </View>
-                  <View style={[styles.metaChip, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                    <Text style={[styles.metaLabel, { color: colors.textMuted }]}>Time</Text>
-                    <Text style={[styles.metaValue, { color: colors.text }]}>{timeLabel}</Text>
-                  </View>
-                  <Pressable
-                    onPress={() => setNotificationsOpen(v => !v)}
-                    style={({ pressed }) => [styles.iconBtn, { backgroundColor: colors.cardAlt, borderColor: colors.border, opacity: pressed ? 0.8 : 1 }]}
-                  >
-                    <Feather name="bell" size={16} color={colors.primary} />
-                    <View style={[styles.alertDot, { backgroundColor: colors.deepAccent }]} />
-                  </Pressable>
-                  <View style={[styles.userWrap, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                    <Pressable onPress={() => router.push('/(main)/profile')} style={[styles.avatar, { backgroundColor: colors.deepAccent }]}>
-                      <Text style={styles.avatarText}>MS</Text>
-                    </Pressable>
-                    <View>
-                      <Text style={[styles.userName, { color: colors.text }]}>Mahi Sharma</Text>
-                      <Pressable onPress={() => setRoleOpen(v => !v)} style={styles.roleBtn}>
-                        <Text style={[styles.roleText, { color: colors.primary }]}>{role}</Text>
-                        <Text style={[styles.roleChevron, { color: colors.primary }]}>{roleOpen ? '▴' : '▾'}</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </>
-              )}
             </View>
-
-            {roleOpen && (
-              <View style={[styles.roleMenu, { backgroundColor: colors.card, borderColor: colors.border, shadowColor: colors.shadowMd }]}>
-                <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={false}>
-                  {roleOptions.map(opt => (
-                    <Pressable
-                      key={opt}
-                      onPress={() => { setRole(opt); setRoleOpen(false); }}
-                      style={({ pressed }) => [styles.roleOption, { borderBottomColor: colors.divider }, pressed && { backgroundColor: colors.navHover }]}
-                    >
-                      <Text style={[styles.roleOptionText, { color: opt === role ? colors.deepAccent : colors.text }]}>{opt}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
-
-            {notificationsOpen && (
-              <View style={[styles.notifPanel, { backgroundColor: colors.card, borderColor: colors.border, shadowColor: colors.shadowMd }]}>
-                <Text style={[styles.notifTitle, { color: colors.text }]}>Notifications</Text>
-                {notifications.map(item => (
-                  <View key={item} style={[styles.notifRow, { borderBottomColor: colors.divider }]}>
-                    <View style={[styles.notifDot, { backgroundColor: colors.deepAccent }]} />
-                    <Text style={[styles.notifText, { color: colors.textSecondary }]}>{item}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
           </View>
 
-          <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {/* Breadcrumb */}
-            <View style={styles.breadcrumbRow}>
-              <Text style={[styles.breadcrumbLink, { color: colors.primary }]} onPress={() => router.push('/(main)/dashboard')}>Dashboard</Text>
-              <Text style={[styles.breadcrumbSep, { color: colors.textMuted }]}> › </Text>
-              <Text style={[styles.breadcrumbCurrent, { color: colors.textMuted }]}>Overview</Text>
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            {/* KPI strip */}
+            <View style={styles.kpiRow}>
+              {kpis.map((k) => (
+                <View key={k.label} style={[styles.kpi, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>{k.label}</Text>
+                  <Text style={[styles.kpiValue, { color: colors.text }]}>{k.value}</Text>
+                  <Text style={{ color: k.good ? colors.success : colors.danger, fontSize: 12, fontWeight: '700' }}>{k.delta}</Text>
+                </View>
+              ))}
+              <View style={[styles.kpi, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Predictions stored</Text>
+                <Text style={[styles.kpiValue, { color: colors.text }]}>{analytics.data?.predictions_stored ?? '—'}</Text>
+                <Text style={{ color: colors.textMuted, fontSize: 11 }}>audited in DB</Text>
+              </View>
             </View>
 
-            {/* Hero Banner */}
-            <View style={[styles.heroBanner, { backgroundColor: colors.card, borderColor: colors.border, shadowColor: colors.shadow }]}>
-              <View style={[styles.heroAccent, { backgroundColor: colors.deepAccent }]} />
-              <View style={styles.heroContent}>
-                <View style={styles.heroLeft}>
-                  <Text style={[styles.heroEyebrow, { color: colors.primary }]}>MARITIME INTELLIGENCE PLATFORM</Text>
-                  <Text style={[styles.heroTitle, { color: colors.text }]}>FREYNA Freight Intelligence</Text>
-                  <Text style={[styles.heroSub, { color: colors.textSecondary }]}>AI-powered ocean freight analytics and voyage optimization</Text>
-                  <View style={styles.heroStatusRow}>
-                    <View style={[styles.statusPill, { backgroundColor: colors.success + '15', borderColor: colors.success + '40' }]}>
-                      <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
-                      <Text style={[styles.statusText, { color: colors.success }]}>System Operational</Text>
-                    </View>
-                    <View style={[styles.statusPill, { backgroundColor: colors.deepAccent + '15', borderColor: colors.deepAccent + '40' }]}>
-                      <Text style={[styles.statusText, { color: colors.deepAccent }]}>Role: {role}</Text>
-                    </View>
+            {/* Forecast chart + alerts */}
+            <View style={styles.gridRow}>
+              <View style={[styles.card, styles.cardWide, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.cardHead}>
+                  <View>
+                    <Text style={[styles.cardEyebrow, { color: colors.primary }]}>AI FREIGHT FORECAST · GLADSTONE → PARADIP (PANAMAX, COAL)</Text>
+                    <Text style={[styles.cardTitle, { color: colors.text }]}>30-Day Rate Path with 80% Confidence Band</Text>
                   </View>
+                  <Pressable onPress={() => router.push('/(main)/forecast')}>
+                    <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>Open forecast →</Text>
+                  </Pressable>
                 </View>
-                {/* KPI Strip */}
-                <View style={styles.heroKPIs}>
-                  {[
-                    { label: 'FREIGHT RATE', value: '$42.8', sub: '/ MT', change: '+8.4%' },
-                    { label: 'FORECAST', value: '$47.6', sub: '40D', change: '+11.2%' },
-                    { label: 'ACCURACY', value: '91.8%', sub: 'AI', change: '+3.2%' },
-                  ].map(k => (
-                    <View key={k.label} style={[styles.kpiItem, { borderLeftColor: colors.divider }]}>
-                      <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>{k.label}</Text>
-                      <View style={styles.kpiValueRow}>
-                        <Text style={[styles.kpiValue, { color: colors.deepAccent }]}>{k.value}</Text>
-                        <Text style={[styles.kpiSub, { color: colors.textMuted }]}>{k.sub}</Text>
+                {fc.data ? (
+                  <ForecastBandChart history={fc.data.history} dates={fc.data.dates} forecast={fc.data.forecast} ciLow={fc.data.ci_low_80} ciHigh={fc.data.ci_high_80} height={230} />
+                ) : (
+                  <View style={{ padding: 40, alignItems: 'center' }}><ActivityIndicator color={colors.deepAccent} /></View>
+                )}
+              </View>
+
+              <View style={[styles.card, styles.cardNarrow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.cardHead}>
+                  <Text style={[styles.cardEyebrow, { color: colors.primary }]}>RISK ALERT FEED (FR-09)</Text>
+                  <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
+                </View>
+                <ScrollView style={{ maxHeight: 262 }} showsVerticalScrollIndicator={false}>
+                  {(alerts.data?.alerts ?? []).slice(0, 8).map((a) => (
+                    <View key={a.id} style={[styles.alertCard, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>{a.category}</Text>
+                        <Text style={{ color: a.severity === 'HIGH' ? colors.danger : colors.warning, fontSize: 10, fontWeight: '800' }}>{a.severity}</Text>
                       </View>
-                      <Text style={[styles.kpiChange, { color: colors.success }]}>{k.change}</Text>
+                      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700', marginTop: 3 }}>{a.title}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={2}>{a.detail}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 3, opacity: 0.7 }}>{a.source} · {a.timestamp}</Text>
                     </View>
                   ))}
+                  {!alerts.data && !alerts.error ? <ActivityIndicator color={colors.deepAccent} style={{ marginTop: 20 }} /> : null}
+                  {alerts.error ? <Text style={{ color: colors.danger, padding: 12 }}>API unavailable: {alerts.error}</Text> : null}
+                </ScrollView>
+              </View>
+            </View>
+
+            {/* Congestion + optimizer */}
+            <View style={styles.gridRow}>
+              <View style={[styles.card, styles.cardWide, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.cardHead}>
+                  <Text style={[styles.cardEyebrow, { color: colors.primary }]}>PORT CONGESTION — INDIA EAST COAST</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>index / 100 · waiting hours</Text>
+                </View>
+                <View style={{ gap: 12, marginTop: 8 }}>
+                  {(snap.data?.port_congestion ?? []).filter((p) => p.role === 'destination').slice(0, 6).map((p) => (
+                    <View key={p.port_id}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{p.name}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{p.congestion_index.toFixed(0)}/100 · ~{p.waiting_hours.toFixed(0)}h</Text>
+                      </View>
+                      <View style={{ height: 7, borderRadius: 4, backgroundColor: colors.cardAlt }}>
+                        <View style={{ height: 7, width: `${Math.min(p.congestion_index, 100)}%`, borderRadius: 4, backgroundColor: p.congestion_index > 60 ? colors.danger : p.congestion_index > 40 ? colors.warning : colors.success }} />
+                      </View>
+                    </View>
+                  ))}
+                  {snap.error ? <Text style={{ color: colors.danger }}>API unavailable: {snap.error}</Text> : null}
                 </View>
               </View>
+
+              <View style={[styles.card, styles.cardNarrow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardEyebrow, { color: colors.primary }]}>VOYAGE OPTIMIZER (FR-06)</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                  <View style={[styles.field, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                    <Text style={styles.fieldLabel}>ORIGIN</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>
+                      {meta.data?.origins.find((o) => o.id === origin)?.name.split(' (')[0] ?? origin}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => { const o = origin; setOrigin(destination); setDestination(o); }} style={styles.swapBtn}><Feather name="repeat" size={14} color={colors.primary} /></Pressable>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <View style={[styles.field, { flex: 1, backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                    <Text style={styles.fieldLabel}>DISCHARGE</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>
+                      {meta.data?.destinations.find((d) => d.id === destination)?.name.split(' (')[0] ?? destination}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => setDestination(meta.data?.destinations[(meta.data.destinations.findIndex((d) => d.id === destination) + 1) % (meta.data?.destinations.length ?? 1)]?.id ?? destination)}
+                    style={[styles.field, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                    <Text style={styles.fieldLabel}>CHANGE</Text>
+                    <Feather name="chevron-right" size={13} color={colors.text} />
+                  </Pressable>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <Pressable onPress={() => setVessel(meta.data?.vessel_classes[(meta.data.vessel_classes.findIndex((v) => v.name === vessel) + 1) % (meta.data?.vessel_classes.length ?? 1)]?.name ?? vessel)}
+                    style={[styles.field, { flex: 1, backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                    <Text style={styles.fieldLabel}>VESSEL</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>{vessel}</Text>
+                  </Pressable>
+                  <View style={[styles.field, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                    <Text style={styles.fieldLabel}>TONNES</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>{Number(tonnes).toLocaleString()}</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                  {(['cost', 'time'] as const).map((p) => (
+                    <Pressable key={p} onPress={() => setPriority(p)} style={[styles.prioChip, priority === p && { backgroundColor: colors.deepAccent }]}>
+                      <Text style={{ color: priority === p ? '#FFF' : colors.textSecondary, fontSize: 11, fontWeight: '700' }}>Priority: {p.toUpperCase()}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={{ marginTop: 12 }}>
+                  <PrimaryButton label={optimizing ? 'Optimizing…' : 'Run optimization'} onPress={runOptimize} loading={optimizing} />
+                </View>
+                {optResult ? (
+                  <View style={{ marginTop: 12 }}>
+                    {optResult.options.slice(0, 3).map((o) => (
+                      <View key={o.vessel_class} style={[styles.alertCard, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>{o.icon} #{o.rank} {o.vessel_class}</Text>
+                          <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>${o.cost_per_t_usd}/t</Text>
+                        </View>
+                        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                          {o.loadable_t.toLocaleString()} t · {o.total_voyage_days}d · TCE ${o.tce_usd_day.toLocaleString()}/d · ₹{o.cost_per_t_inr.toLocaleString()}/t
+                        </Text>
+                      </View>
+                    ))}
+                    <Pressable onPress={() => router.push('/(main)/optimizer')}>
+                      <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700', marginTop: 6 }}>Full ranked analysis →</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
             </View>
 
-            <View style={[styles.contentGrid, isMobile && styles.contentGridMobile]}>
-              <View style={styles.primaryColumn}>
-                {/* Large GIS Maritime Operations World Map */}
-                <WorldMap
-                  activeOrigin={origin}
-                  activeDestination={destination}
-                  onSelectPort={(portName) => {
-                    if (portName !== destination) setOrigin(portName);
-                  }}
-                />
-
-                {/* Voyage Planner */}
-                <VoyagePlanner
-                  origin={origin}
-                  destination={destination}
-                  cargo={cargo}
-                  quantity={quantity}
-                  vessel={vessel}
-                  contract={contract}
-                  onOriginChange={setOrigin}
-                  onDestinationChange={setDestination}
-                  onCargoChange={setCargo}
-                  onQuantityChange={setQuantity}
-                  onVesselChange={setVessel}
-                  onContractChange={setContract}
-                  onAnalyze={handleAnalyze}
-                  isAnalyzing={isAnalyzing}
-                />
-
-                <MarketCards />
-                <RecommendationCard
-                  vessel={vessel}
-                  confidence="96.2%"
-                  eta="8.4 days"
-                  fuelCost="$845 / mt"
-                  risk="Low"
-                  expectedFreight="$1.24M"
-                  trend="Bullish"
-                  reason="The corridor aligns with an advantageous weather window and lower berth congestion, while the selected vessel class preserves cargo density and reduces fuel burn across the route."
-                />
-                <Charts />
+            {/* Ranked cost bars */}
+            {optResult && optResult.options.length ? (
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 14 }]}>
+                <Text style={[styles.cardEyebrow, { color: colors.primary }]}>DELIVERED COST RANKING — {optResult.options[0].loadable_t.toLocaleString()} T COAL</Text>
+                <View style={{ marginTop: 12 }}>
+                  <RankedBars
+                    items={optResult.options.map((o) => ({
+                      label: `${o.vessel_class} via ${optResult.destination.name.split(' (')[0]}`,
+                      value: o.cost_per_t_usd,
+                      sub: `${o.total_voyage_days}d · util ${o.utilisation_pct}%`,
+                      best: o.rank === 1,
+                      color: o.rank === 1 ? PALETTE_GOOD : undefined,
+                    }))}
+                  />
+                </View>
               </View>
+            ) : null}
 
-              <View style={[styles.rightColumn, isMobile && styles.rightColumnMobile]}>
-                <RightPanel />
-              </View>
-            </View>
+            <Text style={[styles.footer, { color: colors.textMuted }]}>
+              Data: calibrated reference curves + trained XGBoost artefacts · figures audited in SQLite · {analytics.data?.note ?? ''}
+            </Text>
           </ScrollView>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
+  );
+}
+
+const PALETTE_GOOD = '#34D399';
+
+function ScreenShellLite({ colors, children }: { colors: { background: string; text: string; textMuted: string }; children: React.ReactNode }) {
+  const { width } = useWindowDimensions();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background, padding: width < 500 ? 14 : 24 }}>
+      <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   shell: { flex: 1, flexDirection: 'row' },
-  mainArea: { flex: 1, minWidth: 0 },
-
-  mobileOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    zIndex: 100, backgroundColor: 'rgba(13,27,42,0.5)', flexDirection: 'row',
-  },
-  mobileDrawer: {
-    width: '82%', maxWidth: 360,
-    borderRightWidth: 1, paddingTop: 22, paddingBottom: 18,
-  },
-  drawerHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 18, paddingHorizontal: 16,
-  },
-  brandWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandMark: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  brandMarkText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
-  brandText: { fontSize: 16, fontWeight: '800' },
-  brandSubText: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-  drawerCloseBtn: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  drawerCloseText: { fontSize: 22, lineHeight: 24 },
-
-  topBar: {
-    position: 'relative', flexDirection: 'row', alignItems: 'flex-start',
-    justifyContent: 'space-between', gap: 16, paddingHorizontal: 20,
-    paddingTop: 18, paddingBottom: 16, borderBottomWidth: 1,
-    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 3, zIndex: 10,
-  },
-  hamburger: {
-    width: 40, height: 40, borderRadius: 12, borderWidth: 1,
-    alignItems: 'center', justifyContent: 'center', marginRight: 4,
-  },
-  topBarLeft: { flex: 1, gap: 8 },
-  eyebrow: { fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase', fontWeight: '700' },
-  title: { fontSize: 24, fontWeight: '800' },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  metaChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
-  metaLabel: { fontSize: 9, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 3 },
-  metaValue: { fontSize: 12, fontWeight: '700' },
-  topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' },
-  searchWrap: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, width: 240,
-    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5,
-  },
-  searchInput: { flex: 1, fontSize: 13, fontWeight: '500' },
-  searchResults: {
-    position: 'absolute', top: 58, left: 0, right: 0,
-    borderRadius: 14, borderWidth: 1, overflow: 'hidden',
-    zIndex: 20, elevation: 20,
-    shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16,
-  },
-  searchResultItem: { paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1 },
-  searchResultLabel: { fontSize: 12, fontWeight: '600' },
-  iconBtn: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1.5,
-    alignItems: 'center', justifyContent: 'center', position: 'relative',
-  },
-  alertDot: {
-    position: 'absolute', width: 8, height: 8, borderRadius: 4,
-    top: 6, right: 6, borderWidth: 1.5, borderColor: '#FFFFFF',
-  },
-  userWrap: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1,
-  },
-  avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
-  userName: { fontSize: 12, fontWeight: '700' },
-  roleBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  roleText: { fontSize: 10, fontWeight: '700' },
-  roleChevron: { fontSize: 10 },
-  roleMenu: {
-    position: 'absolute', top: 100, right: 18, width: 220,
-    borderRadius: 14, borderWidth: 1, paddingVertical: 6,
-    zIndex: 999, elevation: 20,
-    shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16,
-  },
-  roleOption: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1 },
-  roleOptionText: { fontSize: 13, fontWeight: '600' },
-  notifPanel: {
-    position: 'absolute', top: 90, right: 118, width: 280,
-    borderRadius: 14, borderWidth: 1, padding: 14,
-    zIndex: 999, elevation: 20,
-    shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16,
-  },
-  notifTitle: { fontWeight: '700', fontSize: 13, marginBottom: 10 },
-  notifRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1 },
-  notifDot: { width: 8, height: 8, borderRadius: 4 },
-  notifText: { fontSize: 12, fontWeight: '600', flex: 1 },
-
-  scrollView: { flex: 1 },
-  scrollContent: { paddingBottom: 36, paddingHorizontal: 18, paddingTop: 18 },
-
-  breadcrumbRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  breadcrumbLink: { fontSize: 13, fontWeight: '700' },
-  breadcrumbSep: { fontSize: 13, marginHorizontal: 4 },
-  breadcrumbCurrent: { fontSize: 13, fontWeight: '600' },
-
-  heroBanner: {
-    borderRadius: 20, borderWidth: 1, marginBottom: 20, overflow: 'hidden',
-    flexDirection: 'row',
-    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 12, elevation: 4,
-  },
-  heroAccent: { width: 5 },
-  heroContent: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', padding: 20, gap: 16 },
-  heroLeft: { flex: 1, minWidth: 200 },
-  heroEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 6 },
-  heroTitle: { fontSize: 26, fontWeight: '800', letterSpacing: -0.3, marginBottom: 6 },
-  heroSub: { fontSize: 13, lineHeight: 19, marginBottom: 14 },
-  heroStatusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  statusPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1,
-  },
+  mainArea: { flex: 1 },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 22, paddingVertical: 14, borderBottomWidth: 1 },
+  eyebrow: { fontSize: 10, fontWeight: '800', letterSpacing: 1.6 },
+  title: { fontSize: 20, fontWeight: '800', marginTop: 2 },
+  roleChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(127,127,127,0.12)' },
+  statusChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 12, fontWeight: '700' },
-  heroKPIs: { flexDirection: 'row', gap: 0, alignItems: 'stretch' },
-  kpiItem: { paddingLeft: 20, paddingRight: 8, borderLeftWidth: 1 },
-  kpiLabel: { fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
-  kpiValueRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
-  kpiValue: { fontSize: 22, fontWeight: '800' },
-  kpiSub: { fontSize: 11, marginBottom: 3 },
-  kpiChange: { fontSize: 11, fontWeight: '700', marginTop: 4 },
-
-  contentGrid: { flexDirection: 'row', alignItems: 'flex-start', gap: 18 },
-  contentGridMobile: { flexDirection: 'column', gap: 0 },
-  primaryColumn: { flex: 1, minWidth: 0 },
-  rightColumn: { width: 320 },
-  rightColumnMobile: { width: '100%' },
+  content: { padding: 20, gap: 2 },
+  kpiRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap', marginBottom: 14 },
+  kpi: { flex: 1, minWidth: 150, borderWidth: 1, borderRadius: 14, padding: 14 },
+  kpiLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  kpiValue: { fontSize: 21, fontWeight: '800', marginVertical: 4 },
+  kpiMobile: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  gridRow: { flexDirection: 'row', gap: 14, marginTop: 2 },
+  card: { borderWidth: 1, borderRadius: 16, padding: 16 },
+  cardWide: { flex: 1.6, minWidth: 460 },
+  cardNarrow: { flex: 1, minWidth: 300 },
+  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  cardEyebrow: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
+  cardTitle: { fontSize: 15, fontWeight: '800', marginTop: 3 },
+  alertCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 },
+  field: { borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 },
+  fieldLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1, color: 'rgba(127,127,127,0.9)', marginBottom: 2 },
+  swapBtn: { justifyContent: 'center', paddingHorizontal: 10, borderRadius: 9, backgroundColor: 'rgba(127,127,127,0.12)' },
+  prioChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(127,127,127,0.12)' },
+  footer: { fontSize: 11, marginTop: 18, marginBottom: 6 },
 });

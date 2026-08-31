@@ -1,331 +1,92 @@
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useState } from 'react';
+import { Linking, StyleSheet, Text, TextInput, View } from 'react-native';
 import ScreenShell, { Card, PrimaryButton, SectionHeader } from '../../components/ScreenShell';
 import { useTheme } from '../../constants/theme';
-
-type ReportType = 'VOYAGE' | 'FORECAST' | 'RISK' | 'CHARTER';
-
-type Report = {
-  id: string;
-  title: string;
-  type: ReportType;
-  date: string;
-  description: string;
-  status: 'READY' | 'PROCESSING';
-  savingsEst: string;
-};
-
-const reports: Report[] = [
-  {
-    id: 'RPT-26006-01',
-    title: 'Gladstone → Paradip Bulk Charter Optimization',
-    type: 'VOYAGE',
-    date: '31 AUG 2026',
-    description: 'Capesize vs Panamax financial feasibility and demurrage prevention report for SAIL procurement.',
-    status: 'READY',
-    savingsEst: '$345,000',
-  },
-  {
-    id: 'RPT-26006-02',
-    title: '40-Day Forward Freight Curve Analysis',
-    type: 'FORECAST',
-    date: '30 AUG 2026',
-    description: 'Multi-horizon AI rate trajectory covering Australia, Indonesia, and Mozambique loading origins.',
-    status: 'READY',
-    savingsEst: '+8.4% Accuracy',
-  },
-  {
-    id: 'RPT-26006-03',
-    title: 'East Coast Discharge Port Draft & Tide Constraints',
-    type: 'RISK',
-    date: '29 AUG 2026',
-    description: 'Comprehensive LOA, lock gate timing, and Sandheads lightening audit for Haldia & Vizag berths.',
-    status: 'READY',
-    savingsEst: 'Zero Demurrage Risk',
-  },
-  {
-    id: 'RPT-26006-04',
-    title: 'Phased Multi-Voyage Charter Allocation Strategy',
-    type: 'CHARTER',
-    date: '28 AUG 2026',
-    description: 'Contract of Affreightment (COA) multi-parcel evaluation for Ministry of Steel quarterly intake.',
-    status: 'READY',
-    savingsEst: '$1.2M Contract Value',
-  },
-];
+import { useAsync } from '../../hooks/useApi';
+import { exportForecastCsvUrl, exportAlertsCsvUrl, exportOptimizationCsvUrl, getFixtures, postFixture, type Fixture } from '../../services/api';
 
 export default function Reports() {
   const { colors } = useTheme();
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'ALL' | ReportType>('ALL');
+  const fixtures = useAsync<{ fixtures: Fixture[]; count: number }>(() => getFixtures(), []);
+  const [form, setForm] = useState({ vessel_name: 'MV Example', vessel_class: 'Panamax', origin: 'gladstone', destination: 'paradip', tonnes: '75000', rate_usd_t: '19.5', fixture_date: new Date().toISOString().slice(0, 10), broker: '' });
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  const filtered = useMemo(
-    () =>
-      reports.filter(r => {
-        const q = search.toLowerCase().trim();
-        const matchesQuery =
-          r.title.toLowerCase().includes(q) ||
-          r.description.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q);
-        const matchesFilter = filter === 'ALL' || r.type === filter;
-        return matchesQuery && matchesFilter;
-      }),
-    [search, filter]
-  );
-
-  const getTypeStyle = (t: ReportType) => {
-    switch (t) {
-      case 'VOYAGE':
-        return { color: colors.accent, icon: 'compass' };
-      case 'FORECAST':
-        return { color: colors.success, icon: 'trending-up' };
-      case 'RISK':
-        return { color: colors.danger, icon: 'shield-alert' };
-      case 'CHARTER':
-        return { color: colors.primary, icon: 'file-text' };
-    }
+  const save = async () => {
+    setMsg(null); setErr(null);
+    try {
+      await postFixture({
+        vessel_name: form.vessel_name, vessel_class: form.vessel_class, origin: form.origin, destination: form.destination,
+        cargo_type: 'Coal', tonnes: Number(form.tonnes), rate_usd_t: Number(form.rate_usd_t), fixture_date: form.fixture_date, broker: form.broker,
+      });
+      setMsg('Fixture saved ✓ (duplicates rejected by vessel+route+date rule)');
+      void fixtures.reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
+  const field = (key: keyof typeof form, label: string) => (
+    <View style={{ flex: 1, minWidth: 140 }}>
+      <Text style={{ color: colors.textMuted, fontSize: 9, fontWeight: '800', letterSpacing: 1, marginBottom: 4 }}>{label}</Text>
+      <TextInput value={form[key]} onChangeText={(v) => setForm({ ...form, [key]: v })}
+        style={{ backgroundColor: colors.cardAlt, borderColor: colors.border, borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8, color: colors.text, fontSize: 13, fontWeight: '600' }} />
+    </View>
+  );
+
   return (
-    <ScreenShell
-      title="Procurement & Intelligence Reports"
-      subtitle="Executive chartering summaries, audit records, and exportable data dossiers (SIH 26006)"
-      breadcrumb="Reports"
-      badge="AUDIT LOGS"
-      badgeColor={colors.success}
-    >
-      {/* Top Metric Strip */}
-      <View style={styles.metricsRow}>
-        {[
-          { l: 'TOTAL GENERATED REPORTS', v: '48' },
-          { l: 'PROCUREMENT AUDITS READY', v: '42' },
-          { l: 'ESTIMATED ACCUMULATED SAVINGS', v: '$4.2M', highlight: true },
-        ].map(m => (
-          <Card key={m.l} style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>{m.l}</Text>
-            <Text style={[styles.metricValue, { color: m.highlight ? colors.success : colors.text }]}>{m.v}</Text>
-          </Card>
-        ))}
-      </View>
-
-      {/* Search & Filter */}
-      <View style={styles.controlsRow}>
-        <View style={[styles.searchWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-          <Feather name="search" size={14} color={colors.primary} />
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search report dossier or ID..."
-            placeholderTextColor={colors.placeholder}
-            style={[styles.searchInput, { color: colors.inputText }]}
-          />
+    <ScreenShell title="Reports & Fixture Log" subtitle="CSV exports (FR-14) and fixture logging with duplicate detection (FR-08)" badge="EXPORTS" badgeColor={colors.primary}>
+      <SectionHeader eyebrow="FR-14" title="Download current views" />
+      <Card>
+        <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+          <PrimaryButton label="Forecast CSV (90d default)" onPress={() => Linking.openURL(exportForecastCsvUrl('gladstone', 'paradip', 'Panamax', 'Coal', 90))} />
+          <PrimaryButton label="Optimization CSV" onPress={() => Linking.openURL(exportOptimizationCsvUrl('gladstone', 'paradip', 75000, 'Coal', 'cost'))} />
+          <PrimaryButton label="Alerts CSV" onPress={() => Linking.openURL(exportAlertsCsvUrl())} />
         </View>
+        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 10 }}>All exports stream server-side rendered CSV — open directly in Excel.</Text>
+      </Card>
 
-        <View style={styles.filterPills}>
-          {['ALL', 'VOYAGE', 'FORECAST', 'RISK', 'CHARTER'].map(f => (
-            <Pressable
-              key={f}
-              onPress={() => setFilter(f as any)}
-              style={[
-                styles.filterBtn,
-                {
-                  backgroundColor: filter === f ? colors.primary : colors.cardAlt,
-                  borderColor: filter === f ? colors.primary : colors.border,
-                },
-              ]}
-            >
-              <Text style={[styles.filterBtnText, { color: filter === f ? '#FFFFFF' : colors.textMuted }]}>{f}</Text>
-            </Pressable>
+      <SectionHeader eyebrow="FR-08 · CHARTERING CELL" title="Log a fixture" />
+      <Card>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          {field('vessel_name', 'VESSEL NAME')}
+          {field('fixture_date', 'FIXTURE DATE (YYYY-MM-DD)')}
+          {field('tonnes', 'TONNES')}
+          {field('rate_usd_t', 'RATE $/T')}
+          {field('broker', 'BROKER')}
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          {['gladstone', 'samarinda', 'richards_bay'].map((o) => (
+            <Text key={o} onPress={() => setForm({ ...form, origin: o })} style={[styles.chip, form.origin === o && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{o}</Text>
+          ))}
+          <Text style={{ color: colors.textMuted }}>→</Text>
+          {['paradip', 'visakhapatnam', 'haldia', 'dhamra'].map((d) => (
+            <Text key={d} onPress={() => setForm({ ...form, destination: d })} style={[styles.chip, form.destination === d && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{d}</Text>
           ))}
         </View>
-      </View>
+        <View style={{ marginTop: 14 }}>
+          <PrimaryButton label="Save fixture" onPress={save} />
+        </View>
+        {msg ? <Text style={{ color: colors.success, marginTop: 10, fontWeight: '700' }}>{msg}</Text> : null}
+        {err ? <Text style={{ color: colors.warning, marginTop: 10, fontWeight: '700' }}>⛔ {err}</Text> : null}
+      </Card>
 
-      {/* Reports List */}
-      <SectionHeader eyebrow="Intelligence Dossiers" title="Generated Maritime Reports" right={`${filtered.length} READY`} />
-
-      {filtered.map(r => {
-        const typeStyle = getTypeStyle(r.type);
-        return (
-          <Card key={r.id} style={[styles.reportCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.reportTop}>
-              <View style={[styles.reportIcon, { backgroundColor: typeStyle.color + '18', borderColor: typeStyle.color }]}>
-                <Feather name={typeStyle.icon as any} size={18} color={typeStyle.color} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={styles.titleRow}>
-                  <Text style={[styles.reportTitle, { color: colors.text }]}>{r.title}</Text>
-                  <View style={[styles.typeBadge, { backgroundColor: typeStyle.color + '15', borderColor: typeStyle.color }]}>
-                    <Text style={[styles.typeText, { color: typeStyle.color }]}>{r.type}</Text>
-                  </View>
-                </View>
-                <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{r.description}</Text>
-              </View>
+      <SectionHeader eyebrow="AUDIT" title={`Logged fixtures (${fixtures.data?.count ?? 0})`} />
+      <Card>
+        {(fixtures.data?.fixtures ?? []).slice().reverse().map((f) => (
+          <View key={f.id} style={[styles.fixRow, { borderColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontWeight: '800', fontSize: 13 }}>{f.vessel_name} · {f.vessel_class}</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 11 }}>{f.origin} → {f.destination} · {f.tonnes.toLocaleString()} t @ ${f.rate_usd_t}/t · {f.fixture_date}{f.broker ? ` · broker: ${f.broker}` : ''}</Text>
             </View>
-
-            <View style={[styles.reportDivider, { backgroundColor: colors.divider }]} />
-
-            <View style={styles.reportBottom}>
-              <View>
-                <Text style={[styles.metaLabel, { color: colors.textMuted }]}>REPORT DOSSIER ID</Text>
-                <Text style={[styles.metaValue, { color: colors.text }]}>{r.id}</Text>
-              </View>
-              <View>
-                <Text style={[styles.metaLabel, { color: colors.textMuted }]}>GENERATED TIMESTAMP</Text>
-                <Text style={[styles.metaValue, { color: colors.text }]}>{r.date}</Text>
-              </View>
-              <View>
-                <Text style={[styles.metaLabel, { color: colors.textMuted }]}>ESTIMATED IMPACT</Text>
-                <Text style={[styles.metaValue, { color: colors.success }]}>{r.savingsEst}</Text>
-              </View>
-              <View style={styles.readyWrap}>
-                <View style={[styles.readyDot, { backgroundColor: colors.success }]} />
-                <Text style={[styles.readyText, { color: colors.success }]}>{r.status}</Text>
-              </View>
-            </View>
-          </Card>
-        );
-      })}
+            <Text style={{ color: colors.text, fontWeight: '800' }}>${f.total_usd.toLocaleString()}</Text>
+          </View>
+        ))}
+        {!fixtures.data?.count ? <Text style={{ color: colors.textMuted, fontSize: 12 }}>No fixtures logged yet — save one above.</Text> : null}
+      </Card>
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  metricsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 8,
-  },
-  metricCard: {
-    flex: 1,
-    minWidth: 180,
-    padding: 14,
-  },
-  metricLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  metricValue: {
-    fontSize: 22,
-    fontWeight: '900',
-    marginTop: 4,
-  },
-  controlsRow: {
-    marginTop: 8,
-    marginBottom: 8,
-    gap: 10,
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 42,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    outlineStyle: 'none',
-  },
-  filterPills: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  filterBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  filterBtnText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  reportCard: {
-    marginBottom: 12,
-    padding: 16,
-  },
-  reportTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  reportIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  reportTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    flex: 1,
-  },
-  typeBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  typeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  reportDesc: {
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 4,
-  },
-  reportDivider: {
-    height: 1,
-    marginVertical: 12,
-  },
-  reportBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  metaLabel: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  metaValue: {
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  readyWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  readyDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  readyText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
+  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: 'rgba(127,127,127,0.12)', fontSize: 11, fontWeight: '700', overflow: 'hidden' },
+  fixRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, paddingVertical: 10, gap: 10 },
 });

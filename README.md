@@ -1,7 +1,42 @@
 # National Maritime Freight Intelligence System (SIH-2026)
 ### Ministry of Ports, Shipping and Waterways • Government of India
 
-An AI-powered operational decision support platform for dry bulk and container maritime freight rate forecasting, port congestion/vessel idle time prediction, and voyage risk assessment.
+AI-powered decision support for dry-bulk freight on India's East Coast: multi-horizon freight forecasting with honest confidence bands, vessel–route feasibility screening, voyage optimisation, charter-timing advice, TCE economics, scenario comparison and risk alerting.
+
+## 🚀 Quickstart (one command)
+```powershell
+./start.sh           # installs deps, builds web (first run), serves app + API on http://localhost:8081
+```
+Manual mode: backend `python -m uvicorn app.main:app --port 8000` (in `backend/`), frontend `npm run web` (in `frontend/`).
+
+## 🧭 Decision endpoints (all wired into the UI)
+| Capability | Endpoint | UI page |
+| :--- | :--- | :--- |
+| FR-04 Forecast 7/14/30/60/90 d + 80% CI + walk-forward MAPE | `POST /api/forecast/series` | Freight Forecast |
+| FR-05 Feasibility (draft/LOA/beam/gear rules) | `POST /api/feasibility` | Vessel Optimizer |
+| FR-06 Optimisation (ranked $/t, TCE, days) | `POST /api/optimize` | Vessel Optimizer / Dashboard |
+| FR-07 Charter timing (BUY-WINDOW/HOLD + rule cited) | `POST /api/timing` | Market Entry |
+| FR-08 Fixture logging + duplicate detection | `POST /api/fixtures` | Reports |
+| FR-09 Risk alerts (source+timestamp+severity) | `GET /api/alerts` | Risk / Alerts |
+| FR-10 Origin supply watch (cited cards) | `GET /api/origins` | Origins & Data |
+| FR-11 TCE calculator (documented formulas) | `POST /api/tce` | TCE Calculator |
+| FR-12 Scenario comparison (₹/$ included) | `POST /api/scenario/compare` | Simulator |
+| FR-13 Port table admin (audited edits) | `GET/PATCH /api/ports` | Ports & Routes |
+| FR-14 CSV exports | `GET /api/export/*.csv` | Reports / pages |
+| FR-15 Refresh + staleness | `POST /api/admin/refresh` | Origins & Data |
+| Legacy raw models (fixed wrapper) | `POST /api/forecast`, `/api/risk/predict`, `/api/vessel/idle-predict` | — |
+
+## 🔧 What was overhauled
+- **Fixed broken `/api/forecast`**: the pickle stores `models={target_7d,14d,30d}` but the wrapper called a nonexistent `self.model` — every forecast 500'd and the UI silently showed fake numbers. Now returns all three horizons.
+- **No more hardcoded data**: every screen reads from the API (market snapshot, forecast series, feasibility, optimisation, alerts, port table). Removed the fake KPIs ("$1.24M freight", North Sea corridors) and the `setTimeout` "analysis".
+- **Features derived server-side**: lags/rolling means/BDI/coal/FX now computed by `market_data.py` from calibrated reference curves (24-feature training schema reproduced exactly).
+- **Honest uncertainty**: 80% CI from 180-day walk-forward residuals (√h scaling); per-route engine auto-selection (XGBoost vs statistical baseline) by walk-forward MAPE, reported on-screen.
+- **Professional charts**: LTTB-downsampled SVG (5-yr range in ~6 ms), CI bands, scrubbing, gauges, ranked bars.
+- **Zero-config persistence**: SQLite default, tables auto-created; analytics summary reports only audited counts (fabricated padding removed).
+
+## 📂 Structure
+`backend/app/` — `main.py` (API), `market_data.py` (calibrated series), `forecasting.py` (walk-forward + CI), `engine.py` (feasibility/optimisation/timing/TCE/scenarios/alerts), `reference.py` (ports/vessels/distances/citations), `ml.py` (fixed loaders) · `frontend/` — Expo screens wired to the API, `components/ChartsPro.tsx` chart kit, `services/api.ts` typed client · `server.py` — single-origin server (SPA + /api) · `tests/test_api.py` — 19 acceptance checks.
+
 
 ---
 

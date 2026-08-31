@@ -1,240 +1,150 @@
-import { router } from 'expo-router';
-import React, { useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import ScreenShell, { Card, PrimaryButton, ProgressBar, SectionHeader } from '../../components/ScreenShell';
+import React, { useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import ScreenShell, { Card, PrimaryButton, SectionHeader } from '../../components/ScreenShell';
+import { RankedBars } from '../../components/ChartsPro';
 import { useTheme } from '../../constants/theme';
-import { predictVesselIdle } from '../../services/api';
+import { useAsync, fmtInrCr } from '../../hooks/useApi';
+import { exportOptimizationCsvUrl, getMeta, postOptimize, type Meta, type OptimizeResult } from '../../services/api';
 
 export default function Optimizer() {
   const { colors } = useTheme();
-  const [optimizing, setOptimizing] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-  const [idleHours, setIdleHours] = useState<number | null>(null);
-  const progress = useRef(new Animated.Value(0)).current;
-  const resultAnim = useRef(new Animated.Value(0)).current;
+  const meta = useAsync<Meta>(() => getMeta(), []);
+  const origins = meta.data?.origins ?? [];
+  const destinations = meta.data?.destinations ?? [];
+  const [origin, setOrigin] = useState('gladstone');
+  const [destination, setDestination] = useState('paradip');
+  const [tonnes, setTonnes] = useState('75000');
+  const [priority, setPriority] = useState<'cost' | 'time' | 'balanced'>('cost');
+  const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const run = async () => {
-    setOptimizing(true);
-    setShowResult(false);
-    progress.setValue(0);
-    resultAnim.setValue(0);
-    Animated.timing(progress, { toValue: 1, duration: 2200, useNativeDriver: false }).start();
+    setBusy(true); setError(null);
     try {
-      const response = await predictVesselIdle({
-        origin_port: 'Gladstone',
-        destination_port: 'Paradip',
-        vessel_type: 'Panamax',
-        cargo_quantity_mt: 75000,
-        vessel_draft: 14.1,
-        port_max_draft: 16.0,
-        berth_count: 6,
-        handling_rate_mt_hour: 2800,
-        vessels_waiting: 3,
-        port_congestion_index: 0.38,
-        weather_index: 0.22,
-        draft_clearance: 1.9,
-        estimated_handling_hours: 26.8,
-        queue_pressure: 0.42,
-      });
-      setIdleHours(response.prediction);
-    } catch {
-      // Graceful fallback to deterministic maritime berth dwell estimate if network / ML offline
-      setIdleHours(18.4);
-    } finally {
-      setOptimizing(false);
-      setShowResult(true);
-      Animated.spring(resultAnim, { toValue: 1, friction: 7, tension: 50, useNativeDriver: true }).start();
-    }
+      setResult(await postOptimize({ origin, destination, tonnes: Number(tonnes) || 75000, cargo_type: 'Coal', priority }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
   };
 
-  const resultScale = resultAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
-
   return (
-    <ScreenShell title="Vessel Optimizer" subtitle="AI-powered vessel selection for every voyage">
-      {/* Status */}
-      <Card style={styles.statusCard}>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.statusTitle, { color: colors.primary }]}>OPTIMIZATION ENGINE READY</Text>
-            <Text style={[styles.statusSub, { color: colors.textSecondary }]}>Vessel intelligence database synchronized</Text>
-          </View>
-          <Text style={[styles.sysCode, { color: colors.textSecondary }]}>SYS.04</Text>
-        </View>
-      </Card>
-
-      {/* Parameters */}
-      <SectionHeader eyebrow="Voyage Parameters" title="Optimization Inputs" />
-      <Card style={styles.paramCard}>
-        {[
-          { label: 'LOADING PORT (OVERSEAS)', value: 'Gladstone (AUGLT)' },
-          { label: 'DISCHARGE PORT (EAST COAST INDIA)', value: 'Paradip (INPRT)' },
-          { label: 'BULK COMMODITY', value: 'Coking Coal' },
-          { label: 'PARCEL QUANTITY', value: '75,000 MT' },
-          { label: 'CANDIDATE VESSEL CLASS', value: 'Panamax / Capesize' },
-          { label: 'CONTRACT TYPE', value: 'Medium-Term Multi-Voyage (SAIL)' },
-        ].map(p => (
-          <View key={p.label} style={[styles.paramRow, { borderBottomColor: colors.divider }]}>
-            <Text style={[styles.paramLabel, { color: colors.textSecondary }]}>{p.label}</Text>
-            <Text style={[styles.paramValue, { color: colors.text }]}>{p.value}</Text>
-          </View>
-        ))}
-      </Card>
-
-      {/* Factors */}
-      <SectionHeader eyebrow="Intelligence Weights" title="Optimization Factors" />
-      {[
-        { label: 'Freight Economics', value: '35%', pct: 35 },
-        { label: 'Vessel Suitability', value: '25%', pct: 25 },
-        { label: 'Route Risk', value: '20%', pct: 20 },
-        { label: 'Fuel Efficiency', value: '20%', pct: 20 },
-      ].map(f => (
-        <View key={f.label} style={styles.factor}>
-          <View style={styles.factorHeader}>
-            <Text style={[styles.factorLabel, { color: colors.text }]}>{f.label}</Text>
-            <Text style={[styles.factorValue, { color: colors.primary }]}>{f.value}</Text>
-          </View>
-          <ProgressBar value={f.pct} color={colors.primary} />
-        </View>
-      ))}
-
-      <PrimaryButton label={optimizing ? 'OPTIMIZING VESSEL' : 'RUN VESSEL OPTIMIZER'} onPress={run} loading={optimizing} icon="zap" />
-
-      {optimizing && (
-        <Card style={{ marginTop: 12 }}>
-          <View style={styles.processingHeader}>
-            <Text style={[styles.processingTitle, { color: colors.text }]}>AI optimization in progress</Text>
-            <Text style={[styles.processingPct, { color: colors.primary }]}>86%</Text>
-          </View>
-          <View style={[styles.progressTrack, { backgroundColor: colors.divider }]}>
-            <Animated.View style={[styles.progressFill, { backgroundColor: colors.primary, width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
-          </View>
-          <Text style={[styles.processingText, { color: colors.textSecondary }]}>Comparing vessel availability, cost, suitability and route risk...</Text>
-        </Card>
-      )}
-
-      {showResult && (
-        <Animated.View style={{ opacity: resultAnim, transform: [{ scale: resultScale }] }}>
-          <Card style={[styles.resultCard, { borderColor: colors.primary }]}>
-            <View style={styles.resultHeader}>
-              <View>
-                <Text style={[styles.resultEyebrow, { color: colors.primary }]}>AI OPTIMAL MATCH</Text>
-                <Text style={[styles.resultTitle, { color: colors.text }]}>Recommended Vessel</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={[styles.confLabel, { color: colors.textSecondary }]}>CONFIDENCE</Text>
-                <Text style={[styles.confValue, { color: colors.success }]}>94.7%</Text>
-              </View>
-            </View>
-            <View style={[styles.vesselBox, { backgroundColor: colors.primary + '12' }]}>
-              <View style={[styles.vesselIcon, { backgroundColor: colors.primary }]}>
-                <Text style={styles.vesselIconText}>⛴</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.vesselName, { color: colors.text }]}>OCEAN TITAN</Text>
-                <Text style={[styles.vesselType, { color: colors.textSecondary }]}>VLCC • 298,000 DWT</Text>
-                <View style={styles.availRow}>
-                  <View style={[styles.availDot, { backgroundColor: colors.success }]} />
-                  <Text style={[styles.availText, { color: colors.success }]}>AVAILABLE FOR CHARTER</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.resultStats}>
-              {[{ l: 'EST. FREIGHT', v: '$41.9 / MT' }, { l: 'PRED. IDLE TIME', v: idleHours === null ? '—' : `${idleHours.toFixed(1)} HRS` }, { l: 'RISK SCORE', v: 'LOW' }].map(s => (
-                <View key={s.l} style={{ flex: 1 }}>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{s.l}</Text>
-                  <Text style={[styles.statValue, { color: colors.text }]}>{s.v}</Text>
-                </View>
+    <ScreenShell title="Vessel & Route Optimizer" subtitle="Feasibility screen (draft/LOA/beam/gear) then ranked by delivered cost, time or balance (FR-05 + FR-06)" badge="ENGINE" badgeColor={colors.success}>
+      <Card>
+        <View style={styles.row}>
+          <View style={{ flex: 1, minWidth: 240 }}>
+            <Text style={[styles.label, { color: colors.textMuted }]}>LOAD PORT</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+              {origins.map((o) => (
+                <Text key={o.id} onPress={() => setOrigin(o.id)} style={[styles.chip, origin === o.id && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{o.name.split(' (')[0]}</Text>
               ))}
             </View>
-            <View style={[styles.divider, { backgroundColor: colors.divider }]} />
-            <Text style={[styles.reasonTitle, { color: colors.text }]}>Why this vessel?</Text>
-            <Text style={[styles.reasonText, { color: colors.textSecondary }]}>The AI model identifies Ocean Titan as the strongest match based on cargo compatibility, projected freight economics, vessel efficiency and current availability.</Text>
-            <TouchableOpacity
-              style={[styles.analysisBtn, { backgroundColor: colors.primary }]}
-              onPress={() => router.push('/(main)/forecast')}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.analysisBtnText}>VIEW VOYAGE ANALYSIS →</Text>
-            </TouchableOpacity>
-          </Card>
-        </Animated.View>
-      )}
+            <Text style={[styles.label, { color: colors.textMuted, marginTop: 12 }]}>DISCHARGE PORT (EAST COAST INDIA)</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+              {destinations.map((d) => (
+                <Text key={d.id} onPress={() => setDestination(d.id)} style={[styles.chip, destination === d.id && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{d.name.split(' (')[0]}</Text>
+              ))}
+            </View>
+          </View>
+          <View style={{ minWidth: 240 }}>
+            <Text style={[styles.label, { color: colors.textMuted }]}>CARGO (TONNES)</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+              {[30000, 50000, 75000, 150000, 170000].map((t) => (
+                <Text key={t} onPress={() => setTonnes(String(t))} style={[styles.chip, tonnes === String(t) && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{t / 1000}k</Text>
+              ))}
+            </View>
+            <Text style={[styles.label, { color: colors.textMuted, marginTop: 12 }]}>PRIORITY</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+              {(['cost', 'time', 'balanced'] as const).map((p) => (
+                <Text key={p} onPress={() => setPriority(p)} style={[styles.chip, priority === p && { backgroundColor: colors.deepAccent, color: '#FFF' }]}>{p}</Text>
+              ))}
+            </View>
+            <View style={{ marginTop: 14 }}>
+              <PrimaryButton label={busy ? 'Screening classes…' : 'Optimize voyage'} onPress={run} loading={busy} />
+            </View>
+          </View>
+        </View>
+      </Card>
 
-      {/* Alternatives */}
-      <SectionHeader eyebrow="Secondary Matches" title="Alternative Vessels" />
-      {[
-        { name: 'PACIFIC MERIDIAN', type: 'VLCC • 285,000 DWT', score: '91.2%' },
-        { name: 'ATLANTIC HORIZON', type: 'VLCC • 301,000 DWT', score: '88.6%' },
-        { name: 'NORDIC STAR', type: 'VLCC • 276,000 DWT', score: '84.9%' },
-      ].map(a => (
-        <Card key={a.name} style={styles.altCard}>
-          <View style={[styles.altIcon, { backgroundColor: colors.primary + '18' }]}>
-            <Text style={{ fontSize: 18 }}>⛴</Text>
+      {error ? <Card><Text style={{ color: colors.danger }}>API unavailable: {error}</Text></Card> : null}
+      {busy ? <Card><View style={{ alignItems: 'center', padding: 24 }}><ActivityIndicator color={colors.deepAccent} /></View></Card> : null}
+
+      {result && !result.error ? (
+        <>
+          <SectionHeader eyebrow="RANKED OPTIONS" title={`Optimal vessel for ${result.tonnes.toLocaleString()} t → ${result.destination.name.split(' (')[0]}`} right={`FX ₹${result.usd_inr} · ${result.as_of}`} />
+          <View style={{ gap: 10 }}>
+            {result.options.map((o) => (
+              <Card key={o.vessel_class}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  <View>
+                    <Text style={{ color: colors.text, fontWeight: '900', fontSize: 17 }}>{o.icon} #{o.rank} {o.vessel_class}</Text>
+                    <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '700', marginTop: 2 }}>{o.recommendation}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: colors.text, fontWeight: '900', fontSize: 20 }}>${o.cost_per_t_usd}/t</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 11 }}>₹{o.cost_per_t_inr.toLocaleString()}/t · {fmtInrCr(o.total_inr_cr)}</Text>
+                  </View>
+                </View>
+                <View style={[styles.metaGrid, { borderTopColor: colors.border }]}>
+                  {[
+                    ['Loadable', `${o.loadable_t.toLocaleString()} t (${o.utilisation_pct}%)`],
+                    ['Voyage', `${o.total_voyage_days} d (sea ${o.sea_days} + port ${o.port_days})`],
+                    ['ML idle pred.', `${o.predicted_idle_hours} h`],
+                    ['Rate used', `$${o.rate_used_usd_t}/t`],
+                    ['Freight', `$${o.freight_usd.toLocaleString()}`],
+                    ['Fuel + canal', `$${(o.fuel_usd + o.canal_toll_usd).toLocaleString()}`],
+                    ['Port costs', `$${o.port_costs_usd.toLocaleString()}`],
+                    ['Demurrage risk', `$${o.demurrage_risk_usd.toLocaleString()}`],
+                    ['TCE', `$${o.tce_usd_day.toLocaleString()}/d`],
+                    ['vs best', `${o.vs_best_pct > 0 ? '+' : ''}${o.vs_best_pct}%`],
+                  ].map(([k, v]) => (
+                    <View key={k} style={styles.metaCell}>
+                      <Text style={{ color: colors.textMuted, fontSize: 10, fontWeight: '700' }}>{k.toUpperCase()}</Text>
+                      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{v}</Text>
+                    </View>
+                  ))}
+                </View>
+                {o.warnings.length ? (
+                  <View style={{ marginTop: 8 }}>
+                    {o.warnings.map((w) => <Text key={w} style={{ color: colors.warning, fontSize: 11, marginTop: 2 }}>⚠ {w}</Text>)}
+                  </View>
+                ) : null}
+              </Card>
+            ))}
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.altName, { color: colors.text }]}>{a.name}</Text>
-            <Text style={[styles.altType, { color: colors.textSecondary }]}>{a.type}</Text>
-          </View>
-          <View style={{ alignItems: 'flex-end', marginRight: 10 }}>
-            <Text style={[styles.altScore, { color: colors.success }]}>{a.score}</Text>
-            <Text style={[styles.altMatch, { color: colors.textSecondary }]}>MATCH</Text>
-          </View>
-          <Text style={[styles.altArrow, { color: colors.primary }]}>→</Text>
-        </Card>
-      ))}
+
+          <SectionHeader eyebrow="DELIVERED COST" title="Cost per tonne ranking" />
+          <Card>
+            <RankedBars items={result.options.map((o) => ({ label: o.vessel_class, value: o.cost_per_t_usd, sub: `${o.total_voyage_days}d`, best: o.rank === 1 }))} />
+            <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 12 }}>
+              Includes freight (forecast), canal tolls, bunker, port disbursements and demurrage-risk provision. Destination constraints per {result.destination.source} (as-of {result.destination.as_of}).
+            </Text>
+          </Card>
+
+          <SectionHeader eyebrow="INELIGIBLE CLASSES" title="Feasibility screen" />
+          <Card>
+            {result.feasibility.classes.filter((c) => c.status === 'fail').map((c) => (
+              <View key={c.vessel_class} style={{ marginBottom: 10 }}>
+                <Text style={{ color: colors.danger, fontWeight: '800', fontSize: 13 }}>{c.icon} {c.vessel_class}</Text>
+                {c.reasons.map((r) => <Text key={r} style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>· {r}</Text>)}
+              </View>
+            ))}
+            {result.feasibility.classes.every((c) => c.status !== 'fail') ? <Text style={{ color: colors.success, fontWeight: '700' }}>All four classes feasible ✓</Text> : null}
+            <View style={{ marginTop: 12 }}>
+              <PrimaryButton label="Export ranking CSV" variant="ghost" onPress={() => { if (typeof window !== 'undefined') window.open(exportOptimizationCsvUrl(origin, destination, Number(tonnes), 'Coal', priority), '_blank'); }} />
+            </View>
+          </Card>
+        </>
+      ) : null}
+      {result?.error ? <Card><Text style={{ color: colors.warning, fontWeight: '700' }}>{result.error}</Text></Card> : null}
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  statusCard: { marginBottom: 0 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  statusDot: { width: 10, height: 10, borderRadius: 5 },
-  statusTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
-  statusSub: { fontSize: 11, marginTop: 2 },
-  sysCode: { fontSize: 11, fontWeight: '700' },
-  paramCard: { padding: 0, overflow: 'hidden' },
-  param: { paddingHorizontal: 16, paddingVertical: 14 },
-  paramLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  paramValue: { fontSize: 14, fontWeight: '700', marginTop: 3 },
-  factor: { marginBottom: 14 },
-  factorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  factorLabel: { fontSize: 13, fontWeight: '600' },
-  factorValue: { fontSize: 13, fontWeight: '700' },
-  processingHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  processingTitle: { fontSize: 13, fontWeight: '700' },
-  processingPct: { fontSize: 13, fontWeight: '700' },
-  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 10 },
-  progressFill: { height: 6, borderRadius: 3 },
-  processingText: { fontSize: 12, lineHeight: 18 },
-  resultCard: { borderWidth: 2 },
-  resultHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
-  resultEyebrow: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  resultTitle: { fontSize: 20, fontWeight: '800', marginTop: 4 },
-  confLabel: { fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
-  confValue: { fontSize: 18, fontWeight: '800', marginTop: 2 },
-  vesselBox: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, marginBottom: 14 },
-  vesselIcon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  vesselIconText: { fontSize: 22 },
-  vesselName: { fontSize: 16, fontWeight: '800' },
-  vesselType: { fontSize: 12, marginTop: 3 },
-  availRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 5 },
-  availDot: { width: 6, height: 6, borderRadius: 3 },
-  availText: { fontSize: 10, fontWeight: '700' },
-  resultStats: { flexDirection: 'row', marginBottom: 14 },
-  statLabel: { fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  statValue: { fontSize: 14, fontWeight: '800', marginTop: 4 },
-  divider: { height: 1, marginBottom: 14 },
-  reasonTitle: { fontSize: 14, fontWeight: '700', marginBottom: 6 },
-  reasonText: { fontSize: 12, lineHeight: 18, marginBottom: 14 },
-  analysisBtn: { height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  analysisBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
-  altCard: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
-  altIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  altName: { fontSize: 13, fontWeight: '700' },
-  altType: { fontSize: 11, marginTop: 3 },
-  altScore: { fontSize: 14, fontWeight: '800' },
-  altMatch: { fontSize: 9, fontWeight: '700', textTransform: 'uppercase', marginTop: 2 },
-  altArrow: { fontSize: 20 },
+  row: { flexDirection: 'row', gap: 18, flexWrap: 'wrap' },
+  label: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: 'rgba(127,127,127,0.12)', fontSize: 11, fontWeight: '700', overflow: 'hidden' },
+  metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 0, borderTopWidth: 1, marginTop: 12, paddingTop: 10 },
+  metaCell: { width: '20%', minWidth: 110, marginBottom: 8 },
 });
