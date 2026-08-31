@@ -51,6 +51,18 @@ export const logoutUser = () => request<any>('/auth/logout');
 
 export const getCurrentUser = () => request<any>('/auth/me', undefined, 'GET');
 
+export const getAnalyticsSummary = () => request<{
+  total_voyages_analyzed: number;
+  forecast_accuracy_pct: number;
+  avg_freight_rate: number;
+  avg_idle_hours: number;
+  forecast_history_count: number;
+  risk_history_count: number;
+  vessel_history_count: number;
+  savings_generated_usd: number;
+  status: string;
+}>('/analytics/summary', undefined, 'GET');
+
 // ─── Health Check ───────────────────────────────────────────────────────────
 
 export const healthCheck = () => request<any>('/health', undefined, 'GET');
