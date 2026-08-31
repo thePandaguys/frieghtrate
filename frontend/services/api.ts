@@ -5,8 +5,11 @@
  */
 
 const API_BASE: string =
+  process.env.EXPO_PUBLIC_BACKEND_URL ||
   process.env.EXPO_PUBLIC_API_URL ||
-  (typeof window !== 'undefined' && window.location ? `${window.location.origin}/api` : 'http://localhost:8000/api');
+  (typeof window !== 'undefined' && window.location && window.location.port !== '8081' && window.location.port !== '19006'
+    ? `${window.location.origin}/api`
+    : 'http://127.0.0.1:8000/api');
 
 export class ApiError extends Error {
   status: number;
@@ -17,13 +20,22 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, body?: unknown, method: 'GET' | 'POST' | 'PATCH' = 'GET'): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : {};
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (err) {
+    if (!res.ok) {
+      throw new ApiError(`API returned non-JSON response (${res.status}) from ${url}`, res.status);
+    }
+    throw new ApiError(`Invalid JSON from ${url}: ${text.slice(0, 100)}`, res.status);
+  }
   if (!res.ok) throw new ApiError(data?.detail ?? `API ${res.status}`, res.status);
   return data as T;
 }
