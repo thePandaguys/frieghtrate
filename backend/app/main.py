@@ -21,7 +21,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Freight Intelligence API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def save_history(db: Session, model: Type[Any], inputs: dict[str, Any], result: dict[str, Any], confidence: float | None = None) -> None:
